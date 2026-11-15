@@ -9,7 +9,7 @@ import { WEAPONS, WEAPON_ORDER } from './weapon.js';
 const COPY = {
   start: {
     title: 'Dustline Yard',
-    copy: 'Vanguard defends two sites — Foundry and Depot — against four Raiders. Win the round by stopping the plant, defusing the charge, or dropping every Raider.',
+    copy: 'Vanguard defends two sites — Foundry and Depot — against four Raiders. Win the round by stopping the plant, defusing the charge, or dropping every Raider. Buy a Spark-9 frag grenade and press G to clear a corner no rifle can reach.',
     action: 'Click to play',
   },
   paused: {
@@ -44,6 +44,8 @@ export function createHud(minimapWalls) {
   const ammoMag = $('ammo-mag');
   const ammoReserve = $('ammo-reserve');
   const weaponName = $('weapon-name');
+  const grenadeChip = $('grenade-chip');
+  const grenadeCount = $('grenade-count');
   const healthFill = $('health-fill');
   const healthValue = $('health-value');
   const armorValue = $('armor-value');
@@ -81,6 +83,7 @@ export function createHud(minimapWalls) {
   let magCache = -1;
   let reserveCache = -1;
   let weaponCache = '';
+  let grenadeCache = -1;
   let healthCache = -1;
   let armorCache = -1;
   let moneyCache = -1;
@@ -147,14 +150,27 @@ export function createHud(minimapWalls) {
     + meter('ARM', 50, 50)
     + `<i>${WEAPON_ORDER.length + 1}</i>`;
   buyGrid.appendChild(armorButton);
+  // The frag grenade's card: blast damage on the bar, radius and the two-carry
+  // limit in the line, so the shop teaches the grenade like any weapon.
+  const grenadeButton = document.createElement('button');
+  grenadeButton.type = 'button';
+  grenadeButton.className = 'buy-card';
+  grenadeButton.dataset.grenade = '1';
+  grenadeButton.innerHTML = '<b>Spark-9 Frag</b><span class="grenade-line">$300 · blast 130 · radius 7 m · max 2</span>'
+    + meter('BLST', 130, 130)
+    + `<i>${WEAPON_ORDER.length + 2}</i>`;
+  buyGrid.appendChild(grenadeButton);
+  const grenadeLine = grenadeButton.querySelector('.grenade-line');
 
   let buyHandler = null;
   let armorHandler = null;
+  let grenadeHandler = null;
   buyGrid.addEventListener('click', (event) => {
     const card = event.target.closest('.buy-card');
     if (!card) return;
     if (card.dataset.weapon) buyHandler?.(card.dataset.weapon);
     else if (card.dataset.armor) armorHandler?.();
+    else if (card.dataset.grenade) grenadeHandler?.();
   });
 
   function feed(container, html, holdMs) {
@@ -253,8 +269,15 @@ export function createHud(minimapWalls) {
       damageDir.classList.add('on');
       setTimeout(() => damageDir.classList.remove('on'), 450);
     },
-    addKill(killer, victim, killerTeam, headshot, holdMs = 6000) {
-      feed(killfeed, `<span class="${killerTeam}">${killer}</span> ${headshot ? '⌖' : '✕'} <span>${victim}</span>${headshot ? ' <span class="hs">HEADSHOT</span>' : ''}`, holdMs);
+    addKill(killer, victim, killerTeam, headshot, holdMs = 6000, cause = 'gun') {
+      feed(killfeed, `<span class="${killerTeam}">${killer}</span> ${headshot ? '⌖' : '✕'} <span>${victim}</span>${headshot ? ' <span class="hs">HEADSHOT</span>' : ''}${cause === 'grenade' ? ' <span class="hs">FRAG</span>' : ''}`, holdMs);
+    },
+    // Captures re-show the feed with long holds: under a slow software renderer
+    // the 6 s lines can lapse between the shot and the screenshot, so the frame
+    // is pinned from a cleared feed instead of from whatever is left.
+    clearFeeds() {
+      killfeed.innerHTML = '';
+      eventfeed.innerHTML = '';
     },
     addEvent(text, holdMs = 5000) {
       feed(eventfeed, text, holdMs);
@@ -294,7 +317,13 @@ export function createHud(minimapWalls) {
     onPlay(handler) {
       play.addEventListener('click', handler);
     },
-    showBuy(money, secondsLeft, ownedWeapon, hasArmor) {
+    setGrenades(count) {
+      if (count === grenadeCache) return;
+      grenadeCache = count;
+      grenadeCount.textContent = String(count);
+      grenadeChip.hidden = count <= 0;
+    },
+    showBuy(money, secondsLeft, ownedWeapon, hasArmor, grenades = 0) {
       buyMenu.hidden = false;
       buyMoney.textContent = `$${money}`;
       buyTimer.textContent = `Buy phase — ${Math.ceil(secondsLeft)}s`;
@@ -305,6 +334,11 @@ export function createHud(minimapWalls) {
       }
       armorButton.classList.toggle('owned', hasArmor);
       armorButton.classList.toggle('cant', hasArmor || money < 400);
+      grenadeButton.classList.toggle('owned', grenades >= 2);
+      grenadeButton.classList.toggle('cant', grenades >= 2 || money < 300);
+      grenadeLine.textContent = grenades > 0
+        ? `Owned ×${grenades} — $300 each · blast 130 · radius 7 m`
+        : '$300 · blast 130 · radius 7 m · max 2';
     },
     hideBuy() {
       buyMenu.hidden = true;
@@ -314,6 +348,9 @@ export function createHud(minimapWalls) {
     },
     onBuyArmor(handler) {
       armorHandler = handler;
+    },
+    onBuyGrenade(handler) {
+      grenadeHandler = handler;
     },
     showScoreboard(rows, history = []) {
       scoreboard.hidden = false;

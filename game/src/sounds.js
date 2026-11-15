@@ -158,6 +158,11 @@ export function createSounds() {
       burst({ duration: 1.1, frequency: 700, sweepTo: 60, gain: 0.9 });
       blip({ frequency: 90, duration: 0.9, type: 'sine', gain: 0.5, slideTo: 30 });
     },
+    // A grenade leaves the hand: a pin click, then a short whoosh as it arcs away.
+    throwGrenade() {
+      blip({ frequency: 1800, duration: 0.03, type: 'square', gain: 0.1 });
+      burst({ duration: 0.25, frequency: 1200, sweepTo: 300, gain: 0.16 });
+    },
     roundWin() {
       [523, 659, 784].forEach((f, i) => blip({ frequency: f, duration: 0.16, type: 'triangle', gain: 0.2, delay: i * 0.11 }));
     },

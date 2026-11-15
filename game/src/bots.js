@@ -189,6 +189,8 @@ export function createBots(scene, world) {
       strafeDir: 1,
       strafeAt: 0,
       channel: null, // { kind: 'plant'|'defuse', progress: seconds }
+      grenades: 1, // one frag per round: lobbed at a last-seen mark it cannot see
+      grenadeAt: 0, // earliest time it may throw again
       stuckAt: 0,
       stuckPos: new THREE.Vector3(),
       detourUntil: 0,
@@ -221,6 +223,8 @@ export function createBots(scene, world) {
     bot.alive = true;
     bot.fall = 0;
     bot.channel = null;
+    bot.grenades = 1;
+    bot.grenadeAt = 0;
     bot.delayUntil = 0;
     bot.visibleEnemy = null;
     bot.lastSeen = null;
@@ -559,6 +563,21 @@ export function createBots(scene, world) {
     }
   }
 
+  // A Raider with a fresh last-seen mark it cannot see lobs its frag at the mark
+  // instead of walking into the corner blind: the blast clears the hold, and the
+  // bang tells every bot nearby where the fight is. Only when the mark is close
+  // enough to be worth the grenade and the thrower has one left.
+  function maybeThrowGrenade(bot, ctx, time) {
+    if (bot.team !== 'raider' || bot.grenades <= 0 || !ctx.throwGrenade) return;
+    if (!bot.lastSeen || time - bot.lastSeenAt > 4 || time < bot.grenadeAt) return;
+    const d = Math.hypot(bot.lastSeen.x - bot.position.x, bot.lastSeen.z - bot.position.z);
+    if (d < 4 || d > 16) return;
+    if (ctx.throwGrenade(bot, bot.lastSeen)) {
+      bot.grenades -= 1;
+      bot.grenadeAt = time + 14 + ctx.random() * 8;
+    }
+  }
+
   // Stuck? Sidestep along the wall for a beat, then replan from wherever the bot
   // actually is. Replanning the same leg without the sidestep is what used to keep
   // bots pinned to a wall for a whole round.
@@ -641,6 +660,7 @@ export function createBots(scene, world) {
           syncGroup(bot);
           continue;
         }
+        maybeThrowGrenade(bot, ctx, time);
         workObjective(bot, ctx, dt, time);
         handleStuck(bot, ctx, time);
         syncGroup(bot);
