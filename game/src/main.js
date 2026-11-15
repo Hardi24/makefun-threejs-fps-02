@@ -105,37 +105,37 @@ for (let i = 0; i < 24; i += 1) {
   scene.add(line);
   tracers.push({ line, life: 0 });
 }
-let tracerCursor = 0;
+let tracerNext = 0;
 function spawnTracer(from, to, color = 0xf0a830) {
-  const slot = tracers[tracerCursor];
-  tracerCursor = (tracerCursor + 1) % tracers.length;
-  const positions = slot.line.geometry.attributes.position.array;
+  const cell = tracers[tracerNext];
+  tracerNext = (tracerNext + 1) % tracers.length;
+  const positions = cell.line.geometry.attributes.position.array;
   positions[0] = from.x;
   positions[1] = from.y;
   positions[2] = from.z;
   positions[3] = to.x;
   positions[4] = to.y;
   positions[5] = to.z;
-  slot.line.geometry.attributes.position.needsUpdate = true;
-  slot.line.material.color.setHex(color);
-  slot.line.visible = true;
-  slot.line.material.opacity = 0.9;
-  slot.life = 0.07;
+  cell.line.geometry.attributes.position.needsUpdate = true;
+  cell.line.material.color.setHex(color);
+  cell.line.visible = true;
+  cell.line.material.opacity = 0.9;
+  cell.life = 0.07;
 }
 
 // The bomb: a small charge with a blinking lamp, placed where it was planted and
 // hidden again the moment the round ends.
 const bombGroup = new THREE.Group();
-const bombShell = new THREE.Mesh(
+const bombCase = new THREE.Mesh(
   new THREE.BoxGeometry(0.5, 0.28, 0.34),
   new THREE.MeshStandardMaterial({ color: new THREE.Color('#3a2a22'), roughness: 0.6, metalness: 0.4 }),
 );
-const bombLamp = new THREE.Mesh(
+const bombBeacon = new THREE.Mesh(
   new THREE.SphereGeometry(0.06, 10, 8),
   new THREE.MeshBasicMaterial({ color: new THREE.Color('#ff3b30') }),
 );
-bombLamp.position.set(0.18, 0.18, 0);
-bombGroup.add(bombShell, bombLamp);
+bombBeacon.position.set(0.18, 0.18, 0);
+bombGroup.add(bombCase, bombBeacon);
 bombGroup.visible = false;
 scene.add(bombGroup);
 
@@ -629,7 +629,7 @@ function stepRound(dt) {
   if (match.bombState === 'planted') {
     match.bombTime -= dt;
     hud.setBomb('planted', Math.max(0, match.bombTime));
-    bombLamp.material.color.setHex(Math.sin(elapsed * 10) > 0 ? 0xff3b30 : 0x551512);
+    bombBeacon.material.color.setHex(Math.sin(elapsed * 10) > 0 ? 0xff3b30 : 0x551512);
     const interval = match.bombTime > 20 ? 1.0 : match.bombTime > 10 ? 0.55 : 0.3;
     if (elapsed >= match.beepAt) {
       match.beepAt = elapsed + interval;

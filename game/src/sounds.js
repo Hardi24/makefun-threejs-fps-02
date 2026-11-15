@@ -12,7 +12,7 @@ export function createSounds() {
   let enabled = true;
   let muted = false;
 
-  function audioCtx() {
+  function getCtx() {
     if (ctx) return ctx;
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
@@ -27,7 +27,7 @@ export function createSounds() {
     return ctx;
   }
 
-  function noise(seconds) {
+  function noiseBuf(seconds) {
     const buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * seconds), ctx.sampleRate);
     const data = buffer.getChannelData(0);
     for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1;
@@ -36,12 +36,12 @@ export function createSounds() {
 
   function burst({ duration = 0.12, frequency = 1800, type = 'lowpass', gain = 0.5, sweepTo = null, delay = 0 }) {
     if (!enabled) return;
-    const ac = audioCtx();
+    const ac = getCtx();
     if (!ac) return;
     try {
       const t = ac.currentTime + delay;
       const source = ac.createBufferSource();
-      source.buffer = noise(duration + 0.05);
+      source.buffer = noiseBuf(duration + 0.05);
       const filter = ac.createBiquadFilter();
       filter.type = type;
       filter.frequency.setValueAtTime(frequency, t);
@@ -60,7 +60,7 @@ export function createSounds() {
   // blip is burst's tonal twin: one oscillator, an optional slide, same envelope.
   function blip({ frequency = 440, duration = 0.12, type = 'sine', gain = 0.25, slideTo = null, delay = 0 }) {
     if (!enabled) return;
-    const ac = audioCtx();
+    const ac = getCtx();
     if (!ac) return;
     try {
       const t = ac.currentTime + delay;
@@ -81,7 +81,7 @@ export function createSounds() {
 
   return {
     unlock() {
-      const ac = audioCtx();
+      const ac = getCtx();
       if (ac && ac.state === 'suspended') ac.resume().catch(() => {});
     },
     setEnabled(value) {

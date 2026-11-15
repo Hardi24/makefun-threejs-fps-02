@@ -233,11 +233,11 @@ export function createBots(scene, world) {
   function moveBot(bot, dt, wishX, wishZ) {
     const len = Math.hypot(wishX, wishZ);
     if (len < 0.001) return;
-    const stepX = (wishX / len) * BOT_SPEED;
-    const stepZ = (wishZ / len) * BOT_SPEED;
-    const nextX = bot.position.x + stepX * dt;
+    const velX = (wishX / len) * BOT_SPEED;
+    const velZ = (wishZ / len) * BOT_SPEED;
+    const nextX = bot.position.x + velX * dt;
     if (!overlaps(nextX, 0, bot.position.z, BOT_HEIGHT, 0.04)) bot.position.x = nextX;
-    const nextZ = bot.position.z + stepZ * dt;
+    const nextZ = bot.position.z + velZ * dt;
     if (!overlaps(bot.position.x, 0, nextZ, BOT_HEIGHT, 0.04)) bot.position.z = nextZ;
     bot.walkPhase += dt * 9;
     bot.group.position.y = Math.abs(Math.sin(bot.walkPhase)) * 0.03;
@@ -247,12 +247,12 @@ export function createBots(scene, world) {
   // A path leg is only usable when the whole leg is clear; a leg that clips a wall
   // pins the bot against it forever, because the stuck handler would replan the
   // same leg. Used to pick a first node the bot can actually walk to.
-  function clearSegment(x0, z0, x1, z1) {
-    const dist = Math.hypot(x1 - x0, z1 - z0);
+  function clearSegment(sx, sz, ex, ez) {
+    const dist = Math.hypot(ex - sx, ez - sz);
     const steps = Math.max(1, Math.ceil(dist / 0.3));
     for (let i = 0; i <= steps; i += 1) {
       const t = i / steps;
-      if (overlaps(x0 + (x1 - x0) * t, 0, z0 + (z1 - z0) * t, BOT_HEIGHT, 0.04)) return false;
+      if (overlaps(sx + (ex - sx) * t, 0, sz + (ez - sz) * t, BOT_HEIGHT, 0.04)) return false;
     }
     return true;
   }
@@ -266,14 +266,14 @@ export function createBots(scene, world) {
       const db = (WAYPOINTS[b][0] - bot.position.x) ** 2 + (WAYPOINTS[b][1] - bot.position.z) ** 2;
       return da - db;
     });
-    let entry = order[0];
+    let firstNode = order[0];
     for (const node of order) {
       if (clearSegment(bot.position.x, bot.position.z, WAYPOINTS[node][0], WAYPOINTS[node][1])) {
-        entry = node;
+        firstNode = node;
         break;
       }
     }
-    bot.path = findPath(entry, toNode);
+    bot.path = findPath(firstNode, toNode);
     bot.pathTarget = null;
     bot.repathAt = 0;
   }
@@ -283,9 +283,9 @@ export function createBots(scene, world) {
       if (!bot.path.length) return true;
       bot.pathTarget = bot.path[0];
     }
-    const [nx, nz] = WAYPOINTS[bot.pathTarget];
-    const dx = nx - bot.position.x;
-    const dz = nz - bot.position.z;
+    const [gx, gz] = WAYPOINTS[bot.pathTarget];
+    const dx = gx - bot.position.x;
+    const dz = gz - bot.position.z;
     const dist = Math.hypot(dx, dz);
     if (dist < 0.9) {
       bot.path.shift();

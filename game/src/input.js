@@ -4,19 +4,19 @@
 // read like any other through takePressed, so no input path is special-cased in main.js.
 export function createInput(canvas, onLockChange) {
   const keys = new Set();
-  const fresh = new Set();
+  const recent = new Set();
   const state = { keys, locked: false, firing: false, aiming: false, lookX: 0, lookY: 0 };
 
-  function trackKey(event, down) {
+  function noteKey(event, down) {
     if (down) {
       keys.add(event.code);
-      if (!event.repeat) fresh.add(event.code);
+      if (!event.repeat) recent.add(event.code);
     } else keys.delete(event.code);
     if (event.code === 'Space' || event.code === 'Tab') event.preventDefault();
   }
 
-  window.addEventListener('keydown', (event) => trackKey(event, true));
-  window.addEventListener('keyup', (event) => trackKey(event, false));
+  window.addEventListener('keydown', (event) => noteKey(event, true));
+  window.addEventListener('keyup', (event) => noteKey(event, false));
   window.addEventListener('blur', () => keys.clear());
   window.addEventListener('mousemove', (event) => {
     if (!state.locked) return;
@@ -59,8 +59,8 @@ export function createInput(canvas, onLockChange) {
     },
     // Fresh key presses since the last call (no repeats, no held keys).
     takePressed() {
-      const out = [...fresh];
-      fresh.clear();
+      const out = [...recent];
+      recent.clear();
       return out;
     },
   };

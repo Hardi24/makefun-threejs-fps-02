@@ -28,8 +28,8 @@ const COPY = {
 // weapons at a glance instead of asking the player to compare numbers mid-round.
 // The ceilings are the shop's own maxima: the marksman's damage, the SMG's rate,
 // the marksman's range.
-const STAT_CEIL = { damage: 80, rate: 13, range: 100 };
-function bar(label, value, max) {
+const STAT_TOP = { damage: 80, rate: 13, range: 100 };
+function meter(label, value, max) {
   const pct = Math.max(6, Math.min(100, Math.round((value / max) * 100)));
   return `<span class="stat"><i>${label}</i><b><em style="width:${pct}%"></em></b></span>`;
 }
@@ -75,18 +75,18 @@ export function createHud(minimapWalls) {
   const scoreboard = $('scoreboard');
   const scoreRows = $('score-rows');
 
-  let hitTimeout = 0;
-  let bannerTimeout = 0;
-  let toastTimeout = 0;
-  let prevMag = -1;
-  let prevReserve = -1;
-  let prevWeapon = '';
-  let prevHealth = -1;
-  let prevArmor = -1;
-  let prevMoney = -1;
-  let prevTimer = '';
-  let prevScore = '';
-  let prevPips = '';
+  let hitClock = 0;
+  let bannerClock = 0;
+  let toastClock = 0;
+  let magCache = -1;
+  let reserveCache = -1;
+  let weaponCache = '';
+  let healthCache = -1;
+  let armorCache = -1;
+  let moneyCache = -1;
+  let timerCache = '';
+  let scoreCache = '';
+  let pipsCache = '';
 
   // Minimap: static walls drawn once per frame, dots for every living actor, and
   // ghost dots where a Vanguard bot last saw an enemy. The player's facing tick
@@ -132,9 +132,9 @@ export function createHud(minimapWalls) {
     button.className = 'buy-card';
     button.dataset.weapon = id;
     button.innerHTML = `<b>${def.name}</b><span>$${def.price} · ${def.magSize} rounds · headshot ${def.headMult}x</span>`
-      + bar('DMG', def.damage * (def.pellets || 1), STAT_CEIL.damage)
-      + bar('RPM', rate, STAT_CEIL.rate)
-      + bar('RNG', def.range, STAT_CEIL.range)
+      + meter('DMG', def.damage * (def.pellets || 1), STAT_TOP.damage)
+      + meter('RPM', rate, STAT_TOP.rate)
+      + meter('RNG', def.range, STAT_TOP.range)
       + `<i>${WEAPON_ORDER.indexOf(id) + 1}</i>`;
     buyGrid.appendChild(button);
     buyButtons[id] = button;
@@ -144,7 +144,7 @@ export function createHud(minimapWalls) {
   armorButton.className = 'buy-card';
   armorButton.dataset.armor = '1';
   armorButton.innerHTML = '<b>Plated Vest</b><span>$400 · +50 armour</span>'
-    + bar('ARM', 50, 50)
+    + meter('ARM', 50, 50)
     + `<i>${WEAPON_ORDER.length + 1}</i>`;
   buyGrid.appendChild(armorButton);
 
@@ -157,7 +157,7 @@ export function createHud(minimapWalls) {
     else if (card.dataset.armor) armorHandler?.();
   });
 
-  function feedLine(container, html, holdMs) {
+  function feed(container, html, holdMs) {
     const line = document.createElement('div');
     line.className = container === killfeed ? 'kill-line' : 'event-line';
     line.innerHTML = html;
@@ -168,48 +168,48 @@ export function createHud(minimapWalls) {
 
   return {
     setAmmo(mag, reserve, weaponId) {
-      if (mag === prevMag && reserve === prevReserve && weaponId === prevWeapon) return;
-      prevMag = mag;
-      prevReserve = reserve;
-      prevWeapon = weaponId;
+      if (mag === magCache && reserve === reserveCache && weaponId === weaponCache) return;
+      magCache = mag;
+      reserveCache = reserve;
+      weaponCache = weaponId;
       ammoMag.textContent = String(mag);
       ammoReserve.textContent = `/ ${reserve}`;
       weaponName.textContent = WEAPONS[weaponId].name;
       ammo.classList.toggle('empty', mag === 0);
     },
     setHealth(health, armor) {
-      if (health === prevHealth && armor === prevArmor) return;
-      prevHealth = health;
-      prevArmor = armor;
+      if (health === healthCache && armor === armorCache) return;
+      healthCache = health;
+      armorCache = armor;
       healthFill.style.width = `${Math.max(0, health)}%`;
       healthFill.classList.toggle('low', health <= 30);
       healthValue.textContent = String(Math.max(0, Math.ceil(health)));
       armorValue.textContent = armor > 0 ? `+${Math.ceil(armor)}` : '';
     },
     setMoney(money) {
-      if (money === prevMoney) return;
-      prevMoney = money;
+      if (money === moneyCache) return;
+      moneyCache = money;
       moneyValue.textContent = `$${money}`;
     },
     setTimer(seconds) {
       const text = `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
-      if (text === prevTimer) return;
-      prevTimer = text;
+      if (text === timerCache) return;
+      timerCache = text;
       timerValue.textContent = text;
       timerValue.classList.toggle('urgent', seconds <= 10);
     },
     setScore(vanguard, raider, round) {
       const text = `${vanguard}-${raider}-${round}`;
-      if (text === prevScore) return;
-      prevScore = text;
+      if (text === scoreCache) return;
+      scoreCache = text;
       scoreV.textContent = String(vanguard);
       scoreR.textContent = String(raider);
       roundValue.textContent = `ROUND ${round}`;
     },
     setPips(vanguardAlive, raiderAlive) {
       const text = `${vanguardAlive}/${raiderAlive}`;
-      if (text === prevPips) return;
-      prevPips = text;
+      if (text === pipsCache) return;
+      pipsCache = text;
       pipsV.textContent = '●'.repeat(vanguardAlive) + '○'.repeat(Math.max(0, 3 - vanguardAlive));
       pipsR.textContent = '●'.repeat(raiderAlive) + '○'.repeat(Math.max(0, 4 - raiderAlive));
     },
@@ -239,8 +239,8 @@ export function createHud(minimapWalls) {
       hitmarker.classList.add('on');
       hitmarker.classList.toggle('kill', killed);
       hitmarker.classList.toggle('headshot', headshot && !killed);
-      clearTimeout(hitTimeout);
-      hitTimeout = setTimeout(() => hitmarker.classList.remove('on', 'kill', 'headshot'), holdMs);
+      clearTimeout(hitClock);
+      hitClock = setTimeout(() => hitmarker.classList.remove('on', 'kill', 'headshot'), holdMs);
     },
     damageFlash() {
       damageFlash.classList.add('on');
@@ -254,16 +254,16 @@ export function createHud(minimapWalls) {
       setTimeout(() => damageDir.classList.remove('on'), 450);
     },
     addKill(killer, victim, killerTeam, headshot, holdMs = 6000) {
-      feedLine(killfeed, `<span class="${killerTeam}">${killer}</span> ${headshot ? '⌖' : '✕'} <span>${victim}</span>${headshot ? ' <span class="hs">HEADSHOT</span>' : ''}`, holdMs);
+      feed(killfeed, `<span class="${killerTeam}">${killer}</span> ${headshot ? '⌖' : '✕'} <span>${victim}</span>${headshot ? ' <span class="hs">HEADSHOT</span>' : ''}`, holdMs);
     },
     addEvent(text, holdMs = 5000) {
-      feedLine(eventfeed, text, holdMs);
+      feed(eventfeed, text, holdMs);
     },
     showToast(text, ms = 1400) {
       toast.textContent = text;
       toast.hidden = false;
-      clearTimeout(toastTimeout);
-      toastTimeout = setTimeout(() => {
+      clearTimeout(toastClock);
+      toastClock = setTimeout(() => {
         toast.hidden = true;
       }, ms);
     },
@@ -271,13 +271,13 @@ export function createHud(minimapWalls) {
       bannerTitle.textContent = titleText;
       bannerSub.textContent = subText;
       banner.hidden = false;
-      clearTimeout(bannerTimeout);
-      bannerTimeout = setTimeout(() => {
+      clearTimeout(bannerClock);
+      bannerClock = setTimeout(() => {
         banner.hidden = true;
       }, ms);
     },
     hideBanner() {
-      clearTimeout(bannerTimeout);
+      clearTimeout(bannerClock);
       banner.hidden = true;
     },
     showOverlay(mode, detail = '') {
