@@ -255,6 +255,13 @@ function onKill(killerName, victimBot, headshot) {
     hud.setMoney(playerState.money);
     sounds.kill();
   }
+  // The charge changes hands: when the carrier falls, a living Raider picks it up
+  // and carries on to a site, so one lucky shot does not end the objective.
+  if (victimBot.isCarrier && match.bombState === 'none') {
+    victimBot.isCarrier = false;
+    const next = raiderBots.find((b) => b.alive);
+    if (next) next.isCarrier = true;
+  }
   if (match.bombState !== 'planted') hud.setBomb('none', 0); // a channel died with its carrier
   checkRoundEnd();
 }
