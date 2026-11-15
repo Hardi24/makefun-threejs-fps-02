@@ -1,6 +1,10 @@
-// Player movement: acceleration, friction, gravity, crouch and jump, resolved as a box against
-// the world's colliders one axis at a time, so a wall never swallows the player. A small head
-// bob rides on ground speed, so walking reads in the camera without touching the aim.
+// Player movement: acceleration, friction, gravity, crouch and jump, resolved as a
+// box against the world's colliders one axis at a time, so a wall never swallows the
+// player. Aiming down the sights slows the walk to a careful pace, and crouching slows
+// it further while dropping the eye to a lower line. A small head bob rides on ground
+// speed, so walking reads in the camera without touching the aim. The step exposes two
+// events the sound layer uses: a footstep each stride and a landing thud when a jump
+// comes down.
 import * as THREE from 'three';
 
 const RADIUS = 0.34;
@@ -10,11 +14,13 @@ const STAND_EYE = 1.6;
 const CROUCH_EYE = 1.02;
 const WALK_SPEED = 5.2;
 const CROUCH_SPEED = 2.4;
+const ADS_SPEED = 2.9;
 const GROUND_ACCEL = 42;
 const AIR_ACCEL = 9;
 const FRICTION = 9;
 const GRAVITY = 20;
 const JUMP_SPEED = 6.2;
+const STRIDE_LENGTH = 2.3;
 
 export function createPlayer(colliders) {
   const player = {
@@ -25,15 +31,19 @@ export function createPlayer(colliders) {
     eye: STAND_EYE,
     onGround: true,
     crouching: false,
+    aiming: false,
     height: STAND_HEIGHT,
     bobPhase: 0,
     bob: 0,
+    stride: 0,
+    stepped: false,
+    landed: false,
   };
   const probe = new THREE.Box3();
-  const wish = new THREE.Vector3();
+  const move = new THREE.Vector3();
 
-  // lift keeps the feet and the crown out of the horizontal tests, so standing on the floor
-  // is not read as walking into a wall.
+  // lift keeps the feet and the crown out of the horizontal tests, so standing on
+  // the floor is not read as walking into a wall.
   function overlaps(x, y, z, height, lift) {
     probe.min.set(x - RADIUS, y + lift, z - RADIUS);
     probe.max.set(x + RADIUS, y + height - lift, z + RADIUS);
@@ -51,7 +61,10 @@ export function createPlayer(colliders) {
     player.yaw += yawKick;
   }
 
-  function step(dt, keys) {
+  function step(dt, keys, aiming = false) {
+    player.stepped = false;
+    player.landed = false;
+    player.aiming = aiming;
     const crouching = keys.has('ControlLeft') || keys.has('ControlRight') || keys.has('KeyC');
     if (crouching && !player.crouching) {
       player.crouching = true;
@@ -65,23 +78,24 @@ export function createPlayer(colliders) {
 
     const forward = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
     const strafe = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
-    wish.set(0, 0, 0);
+    move.set(0, 0, 0);
     if (forward || strafe) {
       const sin = Math.sin(player.yaw);
       const cos = Math.cos(player.yaw);
-      wish.set(-sin * forward + cos * strafe, 0, -cos * forward - sin * strafe).normalize();
+      move.set(-sin * forward + cos * strafe, 0, -cos * forward - sin * strafe).normalize();
     }
 
-    const speed = player.crouching ? CROUCH_SPEED : WALK_SPEED;
+    const speed = player.crouching ? CROUCH_SPEED : player.aiming ? ADS_SPEED : WALK_SPEED;
     const blend = Math.min(1, (player.onGround ? GROUND_ACCEL : AIR_ACCEL) * dt / speed);
-    player.velocity.x += (wish.x * speed - player.velocity.x) * blend;
-    player.velocity.z += (wish.z * speed - player.velocity.z) * blend;
-    if (player.onGround && !wish.lengthSq()) {
+    player.velocity.x += (move.x * speed - player.velocity.x) * blend;
+    player.velocity.z += (move.z * speed - player.velocity.z) * blend;
+    if (player.onGround && !move.lengthSq()) {
       const damp = Math.max(0, 1 - FRICTION * dt);
       player.velocity.x *= damp;
       player.velocity.z *= damp;
     }
 
+    const wasAirborne = !player.onGround;
     if (keys.has('Space') && player.onGround) {
       player.velocity.y = JUMP_SPEED;
       player.onGround = false;
@@ -112,12 +126,19 @@ export function createPlayer(colliders) {
       player.onGround = true;
     }
     player.velocity.y = Math.max(-30, player.velocity.y);
+    if (wasAirborne && player.onGround) player.landed = true;
 
-    // Head bob: two steps per cycle, scaled by ground speed, fading out in the air.
+    // Head bob and footsteps: two steps per cycle, scaled by ground speed, fading
+    // out in the air. A stride is one full step cycle.
     const groundSpeed = Math.hypot(player.velocity.x, player.velocity.z);
     if (player.onGround && groundSpeed > 0.5) {
       player.bobPhase += dt * groundSpeed * 1.9;
       player.bob = Math.sin(player.bobPhase) * 0.028 * Math.min(1, groundSpeed / WALK_SPEED);
+      player.stride += groundSpeed * dt;
+      if (player.stride >= STRIDE_LENGTH) {
+        player.stride -= STRIDE_LENGTH;
+        player.stepped = true;
+      }
     } else {
       player.bob *= Math.max(0, 1 - dt * 8);
     }

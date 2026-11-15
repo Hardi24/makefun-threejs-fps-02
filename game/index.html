@@ -15,6 +15,7 @@
     --ink: #e9e6df;
     --muted: #98a0a8;
     --accent: #f0a830;
+    --gold: #ffd34d;
     --vanguard: #3fc1a8;
     --raider: #e4572e;
     --danger: #ff3b30;
@@ -35,35 +36,87 @@
   #game, #game canvas { position: fixed; inset: 0; display: block; }
   #hud { position: fixed; inset: 0; pointer-events: none; }
 
-  #crosshair { position: fixed; left: 50%; top: 50%; width: 22px; height: 22px; transform: translate(-50%, -50%); --gap: 5px; }
+  #crosshair { position: fixed; left: 50%; top: 50%; width: 24px; height: 24px; transform: translate(-50%, -50%); --gap: 5px; }
   #crosshair i { position: absolute; background: var(--ink); opacity: .9; }
-  #crosshair i:nth-child(1) { left: 10px; top: calc(10px - var(--gap) - 7px); width: 2px; height: 7px; }
-  #crosshair i:nth-child(2) { left: 10px; top: calc(11px + var(--gap)); width: 2px; height: 7px; }
-  #crosshair i:nth-child(3) { top: 10px; left: calc(10px - var(--gap) - 7px); height: 2px; width: 7px; }
-  #crosshair i:nth-child(4) { top: 10px; left: calc(11px + var(--gap)); height: 2px; width: 7px; }
-  #crosshair b { position: absolute; left: 10px; top: 10px; width: 2px; height: 2px; background: var(--ink); }
+  #crosshair i:nth-child(1) { left: 11px; top: calc(11px - var(--gap) - 8px); width: 2px; height: 8px; }
+  #crosshair i:nth-child(2) { left: 11px; top: calc(12px + var(--gap)); width: 2px; height: 8px; }
+  #crosshair i:nth-child(3) { top: 11px; left: calc(11px - var(--gap) - 8px); height: 2px; width: 8px; }
+  #crosshair i:nth-child(4) { top: 11px; left: calc(12px + var(--gap)); height: 2px; width: 8px; }
+  #crosshair b { position: absolute; left: 11px; top: 11px; width: 2px; height: 2px; background: var(--ink); }
 
-  #hitmarker { position: fixed; left: 50%; top: 50%; width: 26px; height: 26px; transform: translate(-50%, -50%) rotate(45deg); opacity: 0; transition: opacity 90ms linear; }
+  #hitmarker { position: fixed; left: 50%; top: 50%; width: 30px; height: 30px; transform: translate(-50%, -50%) rotate(45deg); opacity: 0; transition: opacity 90ms linear; }
   #hitmarker.on { opacity: 1; }
   #hitmarker.kill i { background: var(--danger); }
   #hitmarker.headshot i { background: var(--accent); }
   #hitmarker i { position: absolute; background: var(--ink); }
-  #hitmarker i:nth-child(1) { left: 12px; top: 0; width: 2px; height: 8px; }
-  #hitmarker i:nth-child(2) { left: 12px; bottom: 0; width: 2px; height: 8px; }
-  #hitmarker i:nth-child(3) { top: 12px; left: 0; height: 2px; width: 8px; }
-  #hitmarker i:nth-child(4) { top: 12px; right: 0; height: 2px; width: 8px; }
+  #hitmarker i:nth-child(1) { left: 14px; top: 0; width: 2px; height: 9px; }
+  #hitmarker i:nth-child(2) { left: 14px; bottom: 0; width: 2px; height: 9px; }
+  #hitmarker i:nth-child(3) { top: 14px; left: 0; height: 2px; width: 9px; }
+  #hitmarker i:nth-child(4) { top: 14px; right: 0; height: 2px; width: 9px; }
 
   #damage-flash { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity 120ms linear;
     background: radial-gradient(ellipse at center, transparent 55%, rgba(255, 59, 48, .45) 100%); }
   #damage-flash.on { opacity: 1; }
 
+  #dmg-dir {
+    position: fixed; left: 50%; top: 50%; width: 170px; height: 170px;
+    transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none;
+    border-top: 5px solid var(--danger); opacity: 0; transition: opacity 120ms linear;
+  }
+  #dmg-dir.on { opacity: .9; }
+
+  #toast {
+    position: fixed; left: 50%; bottom: 180px; transform: translateX(-50%);
+    font-family: var(--font-readout); font-size: 16px; font-weight: 700; letter-spacing: .05em;
+    color: var(--gold);
+    background: color-mix(in srgb, var(--surface) 85%, transparent);
+    border: 1px solid var(--hairline); border-radius: var(--radius-panel);
+    padding: 8px 16px; text-shadow: 0 2px 10px rgba(0,0,0,.7);
+  }
+  #toast[hidden] { display: none; }
+
+  #eventfeed {
+    position: fixed; top: 116px; left: 18px; width: 340px;
+    display: flex; flex-direction: column; gap: 6px;
+    font-family: var(--font-readout); font-size: 12px;
+  }
+  .event-line {
+    background: color-mix(in srgb, var(--surface) 82%, transparent);
+    border: 1px solid var(--hairline); border-left: 3px solid var(--accent); border-radius: var(--radius-panel);
+    padding: 5px 10px; color: var(--muted);
+  }
+  .event-line .vanguard { color: var(--vanguard); font-weight: 700; }
+  .event-line .raider { color: var(--raider); font-weight: 700; }
+
+  /* Scoreboard: centred panel, hidden until Tab is held. */
+  #scoreboard {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: min(440px, calc(100% - 48px));
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    border: 1px solid var(--hairline); border-radius: var(--radius-panel);
+    padding: 20px 22px; pointer-events: none;
+  }
+  #scoreboard[hidden] { display: none; }
+  #scoreboard h2 { margin: 0 0 10px; font-size: 15px; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+  .score-history { font-family: var(--font-readout); font-size: 13px; color: var(--muted); padding-bottom: 8px; letter-spacing: .1em; }
+  .score-history .win { color: var(--vanguard); font-weight: 700; }
+  .score-history .loss { color: var(--raider); font-weight: 700; }
+  .score-row {
+    display: grid; grid-template-columns: 1fr auto auto auto; gap: 16px;
+    font-family: var(--font-readout); font-size: 14px; padding: 5px 0;
+    border-top: 1px solid var(--hairline);
+  }
+  .score-row.vanguard span:first-child { color: var(--vanguard); font-weight: 700; }
+  .score-row.raider span:first-child { color: var(--raider); font-weight: 700; }
+
+  /* Top bar: score, timer, round and alive pips, centred at the top. */
   #topbar {
     position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
-    display: flex; align-items: center; gap: 14px;
+    display: flex; align-items: center; gap: 16px;
     font-family: var(--font-readout); font-size: 14px;
     background: color-mix(in srgb, var(--surface) 82%, transparent);
     border: 1px solid var(--hairline); border-radius: var(--radius-panel);
-    padding: 8px 16px;
+    padding: 9px 18px;
   }
   #topbar .team { font-weight: 700; letter-spacing: .04em; }
   #topbar .vanguard { color: var(--vanguard); }
@@ -150,7 +203,7 @@
 
   #buy-menu {
     position: fixed; left: 50%; bottom: 150px; transform: translateX(-50%);
-    width: min(680px, calc(100% - 48px));
+    width: min(820px, calc(100% - 48px));
     background: color-mix(in srgb, var(--surface) 94%, transparent);
     border: 1px solid var(--hairline); border-radius: var(--radius-panel);
     padding: 20px 22px; pointer-events: auto;
@@ -160,7 +213,7 @@
   #buy-head h2 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.01em; }
   #buy-money { font-family: var(--font-readout); font-size: 18px; font-weight: 700; color: var(--accent); }
   #buy-timer { margin-left: auto; font-family: var(--font-readout); font-size: 13px; color: var(--muted); }
-  #buy-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  #buy-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
   .buy-card {
     font: inherit; text-align: left; cursor: pointer;
     display: flex; flex-direction: column; gap: 4px;
@@ -170,6 +223,10 @@
   .buy-card:hover { border-color: var(--ink); }
   .buy-card b { font-size: 14px; font-weight: 600; }
   .buy-card span { font-size: 12px; color: var(--muted); line-height: 1.35; }
+  .buy-card .stat { display: flex; align-items: center; gap: 6px; font-size: 10px; }
+  .buy-card .stat i { font-style: normal; font-family: var(--font-readout); color: var(--muted); width: 26px; }
+  .buy-card .stat b { flex: 1; height: 4px; background: var(--hairline); border-radius: 2px; overflow: hidden; }
+  .buy-card .stat em { display: block; height: 100%; background: var(--accent); }
   .buy-card i {
     font-style: normal; font-family: var(--font-readout); font-size: 11px; color: var(--muted);
     border: 1px solid var(--hairline); border-radius: 4px; padding: 1px 6px; align-self: flex-start;
@@ -212,6 +269,13 @@
 
 <div id="hud" aria-hidden="true">
   <div id="damage-flash"></div>
+  <div id="dmg-dir"></div>
+  <div id="toast" hidden></div>
+  <div id="eventfeed"></div>
+  <div id="scoreboard" hidden>
+    <h2>Scoreboard — hold Tab</h2>
+    <div id="score-rows"></div>
+  </div>
   <div id="crosshair"><i></i><i></i><i></i><i></i><b></b></div>
   <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
   <div id="topbar">
@@ -249,7 +313,11 @@
       <li><kbd>Mouse</kbd> Look</li>
       <li><kbd>Click</kbd> Fire</li>
       <li><kbd>R</kbd> Reload</li>
-      <li><kbd>1</kbd>–<kbd>5</kbd> Buy weapons &amp; armour</li>
+      <li><kbd>Right click</kbd> Aim down sights</li>
+      <li><kbd>F</kbd> Inspect weapon</li>
+      <li><kbd>M</kbd> Mute sound</li>
+      <li><kbd>Tab</kbd> Scoreboard (hold)</li>
+      <li><kbd>1</kbd>–<kbd>6</kbd> Buy weapons &amp; armour</li>
       <li><kbd>E</kbd> Defuse the charge (hold)</li>
       <li><kbd>Ctrl</kbd> Crouch</li>
       <li><kbd>Space</kbd> Jump</li>

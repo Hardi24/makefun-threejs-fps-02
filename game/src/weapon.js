@@ -1,35 +1,44 @@
-// The armoury: four hitscan weapons, each with its own view model, magazine, fire rate,
-// damage and spread. Accuracy counts more than speed: spread grows with movement and with
-// sustained fire, and the first shot from still is the truest. Headshots pay: a hit on the
-// head multiplies damage (3x, 2.5x on the marksman). The weapon owns the numbers;
-// main.js owns the ray and the damage.
+// The armoury: five hitscan weapons, each with its own view model, magazine, fire rate,
+// damage, spread and zoom. Accuracy counts more than speed: spread grows with movement
+// and with sustained fire, and the first shot from still is the truest. Headshots pay:
+// a hit on the head multiplies damage (3x, 2.5x on the marksman). The scattergun is the
+// exception to the one-ray rule — it throws a cone of pellets, so main.js fires it as
+// several rays from one trigger pull. Aiming down the sights zooms the view, and the zoom
+// is per weapon: the marksman pulls in tight, the scattergun barely narrows at all. The
+// weapon owns the numbers; main.js owns the ray and the damage. Pressing F dips the view
+// model for an inspect flourish; it changes nothing but the pose.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 
 export const WEAPONS = {
   pistol: {
     id: 'pistol', name: 'P9 Sidearm', price: 0, magSize: 12, reserve: 48,
-    fireGap: 0.16, reloadTime: 1.3, damage: 26, headMult: 3,
-    spreadStill: 0.004, spreadMoving: 0.03, auto: false, range: 60,
+    fireGap: 0.16, reloadTime: 1.3, damage: 26, headMult: 3, pellets: 1,
+    spreadStill: 0.004, spreadMoving: 0.03, auto: false, range: 60, adsFov: 62,
   },
   smg: {
     id: 'smg', name: 'Hornet SMG', price: 600, magSize: 28, reserve: 84,
-    fireGap: 0.075, reloadTime: 1.7, damage: 22, headMult: 3,
-    spreadStill: 0.007, spreadMoving: 0.036, auto: true, range: 50,
+    fireGap: 0.075, reloadTime: 1.7, damage: 22, headMult: 3, pellets: 1,
+    spreadStill: 0.007, spreadMoving: 0.036, auto: true, range: 50, adsFov: 58,
   },
   rifle: {
     id: 'rifle', name: 'VK-47 Rifle', price: 1000, magSize: 30, reserve: 90,
-    fireGap: 0.096, reloadTime: 1.9, damage: 34, headMult: 3,
-    spreadStill: 0.0022, spreadMoving: 0.028, auto: true, range: 80,
+    fireGap: 0.096, reloadTime: 1.9, damage: 34, headMult: 3, pellets: 1,
+    spreadStill: 0.0022, spreadMoving: 0.028, auto: true, range: 80, adsFov: 55,
+  },
+  shotgun: {
+    id: 'shotgun', name: 'Riot-12 Scattergun', price: 900, magSize: 6, reserve: 24,
+    fireGap: 0.9, reloadTime: 2.4, damage: 13, headMult: 2, pellets: 6,
+    spreadStill: 0.035, spreadMoving: 0.055, auto: false, range: 28, adsFov: 60,
   },
   marksman: {
     id: 'marksman', name: 'Longbow DMR', price: 1500, magSize: 5, reserve: 20,
-    fireGap: 0.85, reloadTime: 2.6, damage: 80, headMult: 2.5,
-    spreadStill: 0.0008, spreadMoving: 0.05, auto: false, range: 100,
+    fireGap: 0.85, reloadTime: 2.6, damage: 80, headMult: 2.5, pellets: 1,
+    spreadStill: 0.0008, spreadMoving: 0.05, auto: false, range: 100, adsFov: 42,
   },
 };
 
-export const WEAPON_ORDER = ['pistol', 'smg', 'rifle', 'marksman'];
+export const WEAPON_ORDER = ['pistol', 'smg', 'rifle', 'shotgun', 'marksman'];
 
 const MOVE_REFERENCE = 5.2;
 
@@ -56,7 +65,7 @@ export function createWeapon(camera) {
   let def = WEAPONS.rifle;
   const state = {
     weaponId: 'rifle', mag: def.magSize, reserve: def.reserve,
-    cooldown: 0, reloadLeft: 0, flash: 0, kick: 0, bloom: 0,
+    cooldown: 0, reloadLeft: 0, flash: 0, kick: 0, bloom: 0, inspect: 0,
   };
 
   function buildModel() {
@@ -78,6 +87,17 @@ export function createWeapon(camera) {
       const mag = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.22, 0.08), accent);
       mag.position.set(0, -0.14, -0.05);
       model.add(mag);
+    } else if (def.id === 'shotgun') {
+      // A fat pump tube under a wide barrel: the scattergun reads at a glance,
+      // even in the half-second before the buy menu closes.
+      const pump = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.26), accent);
+      pump.position.set(0, -0.03, -0.32);
+      model.add(pump);
+      barrel.scale.set(1.6, 1.6, 1.1);
+      barrel.position.z = -0.42;
+      const sight = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.05, 0.03), accent);
+      sight.position.set(0, 0.075, -0.1);
+      model.add(sight);
     } else if (def.id === 'marksman') {
       const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.22, 10), accent);
       scope.rotation.x = Math.PI / 2;
@@ -92,7 +112,7 @@ export function createWeapon(camera) {
     }
     // Pushed out and shrunk: a view model this close to the camera reads as a wall
     // of metal. At 0.75 m with a 0.65 scale the receiver sits in the lower-right
-    // corner the way a held rifle should.
+    // corner the way a held weapon should.
     model.position.set(0.3, -0.28, -0.75);
     model.scale.setScalar(0.65);
     model.rotation.set(0, 0, 0);
@@ -105,8 +125,19 @@ export function createWeapon(camera) {
     state.flash = Math.max(0, state.flash - dt);
     state.kick += (0 - state.kick) * Math.min(1, dt * 14);
     state.bloom = Math.max(0, state.bloom - dt * 0.06);
+    state.inspect = Math.max(0, state.inspect - dt);
     model.position.z = -0.75 + state.kick;
     model.rotation.x = state.kick * 2.2;
+    if (state.inspect > 0) {
+      // Inspect flourish: the weapon dips and rolls, then comes back to rest.
+      const t = 1 - state.inspect / 0.9;
+      model.rotation.x += Math.sin(t * Math.PI) * -0.5;
+      model.rotation.z = Math.sin(t * Math.PI) * 0.7;
+      model.position.y = -0.28 - Math.sin(t * Math.PI) * 0.08;
+    } else {
+      model.rotation.z = 0;
+      model.position.y = -0.28;
+    }
     flash.visible = state.flash > 0;
     flash.rotation.z = state.flash * 30;
     flashLight.intensity = state.flash > 0 ? 18 : 0;
@@ -134,7 +165,7 @@ export function createWeapon(camera) {
     pullTrigger() {
       state.cooldown = def.fireGap;
       state.flash = 0.06;
-      state.kick = def.id === 'marksman' ? 0.11 : 0.055;
+      state.kick = def.id === 'marksman' ? 0.11 : def.id === 'shotgun' ? 0.14 : 0.055;
       state.bloom = Math.min(0.05, state.bloom + (def.id === 'smg' ? 0.004 : 0.007));
     },
     takeRound() {
@@ -147,6 +178,14 @@ export function createWeapon(camera) {
       state.reloadLeft = def.reloadTime;
       return true;
     },
+    inspect() {
+      if (state.inspect > 0 || state.reloadLeft > 0) return false;
+      state.inspect = 0.9;
+      return true;
+    },
+    // Spread right now: the still baseline, plus a movement share of the moving
+    // baseline, plus bloom from sustained fire. The caller multiplies it down for
+    // aiming and crouching.
     spread(speed) {
       const moving = def.spreadStill + Math.min(1, speed / MOVE_REFERENCE) * def.spreadMoving;
       return moving + state.bloom;
@@ -161,6 +200,7 @@ export function createWeapon(camera) {
       state.reloadLeft = 0;
       state.flash = 0;
       state.bloom = 0;
+      state.inspect = 0;
       buildModel();
       return true;
     },
@@ -172,6 +212,7 @@ export function createWeapon(camera) {
       state.flash = 0;
       state.kick = 0;
       state.bloom = 0;
+      state.inspect = 0;
     },
   };
 }

@@ -1,6 +1,9 @@
 // The DOM HUD: crosshair, hit marker, health, ammo, money, round timer, team scores,
-// kill feed, buy menu, round banners and a top-down minimap. It never touches the
-// simulation; main.js pushes numbers in and reads the play and buy callbacks out.
+// kill feed, event feed, buy menu, round banners, a damage-direction indicator, a
+// scoreboard and a top-down minimap. It never touches the simulation; main.js pushes
+// numbers in and reads the play and buy callbacks out. Every setter caches its last
+// value, so a steady frame costs no DOM writes at all. The scoreboard carries the
+// round history on top, so a held Tab shows the match's story, not just its frags.
 import { WEAPONS, WEAPON_ORDER } from './weapon.js';
 
 const COPY = {
@@ -20,6 +23,16 @@ const COPY = {
     action: 'Play again',
   },
 };
+
+// Buy-card stat bars are scaled against the best in the shop, so the bars compare
+// weapons at a glance instead of asking the player to compare numbers mid-round.
+// The ceilings are the shop's own maxima: the marksman's damage, the SMG's rate,
+// the marksman's range.
+const STAT_CEIL = { damage: 80, rate: 13, range: 100 };
+function bar(label, value, max) {
+  const pct = Math.max(6, Math.min(100, Math.round((value / max) * 100)));
+  return `<span class="stat"><i>${label}</i><b><em style="width:${pct}%"></em></b></span>`;
+}
 
 export function createHud(minimapWalls) {
   const $ = (id) => document.getElementById(id);
@@ -42,12 +55,15 @@ export function createHud(minimapWalls) {
   const pipsV = $('pips-v');
   const pipsR = $('pips-r');
   const killfeed = $('killfeed');
+  const eventfeed = $('eventfeed');
   const banner = $('banner');
   const bannerTitle = $('banner-title');
   const bannerSub = $('banner-sub');
+  const toast = $('toast');
   const crosshair = $('crosshair');
   const hitmarker = $('hitmarker');
   const damageFlash = $('damage-flash');
+  const damageDir = $('dmg-dir');
   const bombChip = $('bomb-chip');
   const bombText = $('bomb-text');
   const buyMenu = $('buy-menu');
@@ -56,20 +72,25 @@ export function createHud(minimapWalls) {
   const buyTimer = $('buy-timer');
   const hint = $('hint');
   const minimap = $('minimap');
+  const scoreboard = $('scoreboard');
+  const scoreRows = $('score-rows');
 
-  let hitTimer = 0;
-  let bannerTimer = 0;
-  let lastMag = -1;
-  let lastReserve = -1;
-  let lastWeapon = '';
-  let lastHealth = -1;
-  let lastArmor = -1;
-  let lastMoney = -1;
-  let lastTimer = '';
-  let lastScore = '';
-  let lastPips = '';
+  let hitTimeout = 0;
+  let bannerTimeout = 0;
+  let toastTimeout = 0;
+  let prevMag = -1;
+  let prevReserve = -1;
+  let prevWeapon = '';
+  let prevHealth = -1;
+  let prevArmor = -1;
+  let prevMoney = -1;
+  let prevTimer = '';
+  let prevScore = '';
+  let prevPips = '';
 
-  // Minimap: static walls drawn once, dots each frame.
+  // Minimap: static walls drawn once per frame, dots for every living actor, and
+  // ghost dots where a Vanguard bot last saw an enemy. The player's facing tick
+  // shows which way the camera looks.
   const mapCtx = minimap.getContext('2d');
   const MAP_W = 48;
   const MAP_H = 40;
@@ -99,15 +120,22 @@ export function createHud(minimapWalls) {
     }
   }
 
-  // Buy menu cards, built once; prices and affordability update per phase.
+  // Buy menu cards, built once; prices and affordability update per phase. Each card
+  // carries three stat bars (damage per shot, fire rate, range) plus the headshot
+  // multiplier, so the shop teaches the weapons instead of hiding them.
   const buyButtons = {};
   for (const id of WEAPON_ORDER) {
     const def = WEAPONS[id];
+    const rate = Math.round((1 / def.fireGap) * (def.pellets || 1) * 10) / 10;
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'buy-card';
     button.dataset.weapon = id;
-    button.innerHTML = `<b>${def.name}</b><span>$${def.price} · ${def.magSize} rounds · ${def.damage} dmg · headshot ${def.headMult}x</span><i>${WEAPON_ORDER.indexOf(id) + 1}</i>`;
+    button.innerHTML = `<b>${def.name}</b><span>$${def.price} · ${def.magSize} rounds · headshot ${def.headMult}x</span>`
+      + bar('DMG', def.damage * (def.pellets || 1), STAT_CEIL.damage)
+      + bar('RPM', rate, STAT_CEIL.rate)
+      + bar('RNG', def.range, STAT_CEIL.range)
+      + `<i>${WEAPON_ORDER.indexOf(id) + 1}</i>`;
     buyGrid.appendChild(button);
     buyButtons[id] = button;
   }
@@ -115,7 +143,9 @@ export function createHud(minimapWalls) {
   armorButton.type = 'button';
   armorButton.className = 'buy-card';
   armorButton.dataset.armor = '1';
-  armorButton.innerHTML = '<b>Plated Vest</b><span>$400 · +50 armour</span><i>5</i>';
+  armorButton.innerHTML = '<b>Plated Vest</b><span>$400 · +50 armour</span>'
+    + bar('ARM', 50, 50)
+    + `<i>${WEAPON_ORDER.length + 1}</i>`;
   buyGrid.appendChild(armorButton);
 
   let buyHandler = null;
@@ -127,53 +157,64 @@ export function createHud(minimapWalls) {
     else if (card.dataset.armor) armorHandler?.();
   });
 
+  function feedLine(container, html, holdMs) {
+    const line = document.createElement('div');
+    line.className = container === killfeed ? 'kill-line' : 'event-line';
+    line.innerHTML = html;
+    container.prepend(line);
+    while (container.children.length > 5) container.lastChild.remove();
+    setTimeout(() => line.remove(), holdMs);
+  }
+
   return {
     setAmmo(mag, reserve, weaponId) {
-      if (mag === lastMag && reserve === lastReserve && weaponId === lastWeapon) return;
-      lastMag = mag;
-      lastReserve = reserve;
-      lastWeapon = weaponId;
+      if (mag === prevMag && reserve === prevReserve && weaponId === prevWeapon) return;
+      prevMag = mag;
+      prevReserve = reserve;
+      prevWeapon = weaponId;
       ammoMag.textContent = String(mag);
       ammoReserve.textContent = `/ ${reserve}`;
       weaponName.textContent = WEAPONS[weaponId].name;
       ammo.classList.toggle('empty', mag === 0);
     },
     setHealth(health, armor) {
-      if (health === lastHealth && armor === lastArmor) return;
-      lastHealth = health;
-      lastArmor = armor;
+      if (health === prevHealth && armor === prevArmor) return;
+      prevHealth = health;
+      prevArmor = armor;
       healthFill.style.width = `${Math.max(0, health)}%`;
       healthFill.classList.toggle('low', health <= 30);
       healthValue.textContent = String(Math.max(0, Math.ceil(health)));
       armorValue.textContent = armor > 0 ? `+${Math.ceil(armor)}` : '';
     },
     setMoney(money) {
-      if (money === lastMoney) return;
-      lastMoney = money;
+      if (money === prevMoney) return;
+      prevMoney = money;
       moneyValue.textContent = `$${money}`;
     },
     setTimer(seconds) {
       const text = `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
-      if (text === lastTimer) return;
-      lastTimer = text;
+      if (text === prevTimer) return;
+      prevTimer = text;
       timerValue.textContent = text;
       timerValue.classList.toggle('urgent', seconds <= 10);
     },
     setScore(vanguard, raider, round) {
       const text = `${vanguard}-${raider}-${round}`;
-      if (text === lastScore) return;
-      lastScore = text;
+      if (text === prevScore) return;
+      prevScore = text;
       scoreV.textContent = String(vanguard);
       scoreR.textContent = String(raider);
       roundValue.textContent = `ROUND ${round}`;
     },
     setPips(vanguardAlive, raiderAlive) {
       const text = `${vanguardAlive}/${raiderAlive}`;
-      if (text === lastPips) return;
-      lastPips = text;
+      if (text === prevPips) return;
+      prevPips = text;
       pipsV.textContent = '●'.repeat(vanguardAlive) + '○'.repeat(Math.max(0, 3 - vanguardAlive));
       pipsR.textContent = '●'.repeat(raiderAlive) + '○'.repeat(Math.max(0, 4 - raiderAlive));
     },
+    // The bomb chip: hidden until a charge is being planted or is armed, red
+    // while the timer runs, and counting down in whole seconds.
     setBomb(state, seconds) {
       if (state === 'none') {
         bombChip.hidden = true;
@@ -191,36 +232,52 @@ export function createHud(minimapWalls) {
       const gap = 4 + Math.min(26, spread * 600);
       crosshair.style.setProperty('--gap', `${gap.toFixed(1)}px`);
     },
+    setAiming(aiming) {
+      crosshair.style.opacity = aiming ? '0.45' : '1';
+    },
     hitMarker(killed, holdMs = 90, headshot = false) {
       hitmarker.classList.add('on');
       hitmarker.classList.toggle('kill', killed);
       hitmarker.classList.toggle('headshot', headshot && !killed);
-      clearTimeout(hitTimer);
-      hitTimer = setTimeout(() => hitmarker.classList.remove('on', 'kill', 'headshot'), holdMs);
+      clearTimeout(hitTimeout);
+      hitTimeout = setTimeout(() => hitmarker.classList.remove('on', 'kill', 'headshot'), holdMs);
     },
     damageFlash() {
       damageFlash.classList.add('on');
       setTimeout(() => damageFlash.classList.remove('on'), 120);
     },
+    // A red arc at the screen edge, rotated to the bearing the shot came from:
+    // the player learns where to look without a minimap glance.
+    damageDirection(angleDeg) {
+      damageDir.style.transform = `translate(-50%, -50%) rotate(${angleDeg}deg)`;
+      damageDir.classList.add('on');
+      setTimeout(() => damageDir.classList.remove('on'), 450);
+    },
     addKill(killer, victim, killerTeam, headshot, holdMs = 6000) {
-      const line = document.createElement('div');
-      line.className = 'kill-line';
-      line.innerHTML = `<span class="${killerTeam}">${killer}</span> ${headshot ? '⌖' : '✕'} <span>${victim}</span>${headshot ? ' <span class="hs">HEADSHOT</span>' : ''}`;
-      killfeed.prepend(line);
-      while (killfeed.children.length > 5) killfeed.lastChild.remove();
-      setTimeout(() => line.remove(), holdMs);
+      feedLine(killfeed, `<span class="${killerTeam}">${killer}</span> ${headshot ? '⌖' : '✕'} <span>${victim}</span>${headshot ? ' <span class="hs">HEADSHOT</span>' : ''}`, holdMs);
+    },
+    addEvent(text, holdMs = 5000) {
+      feedLine(eventfeed, text, holdMs);
+    },
+    showToast(text, ms = 1400) {
+      toast.textContent = text;
+      toast.hidden = false;
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => {
+        toast.hidden = true;
+      }, ms);
     },
     showBanner(titleText, subText, ms = 2600) {
       bannerTitle.textContent = titleText;
       bannerSub.textContent = subText;
       banner.hidden = false;
-      clearTimeout(bannerTimer);
-      bannerTimer = setTimeout(() => {
+      clearTimeout(bannerTimeout);
+      bannerTimeout = setTimeout(() => {
         banner.hidden = true;
       }, ms);
     },
     hideBanner() {
-      clearTimeout(bannerTimer);
+      clearTimeout(bannerTimeout);
       banner.hidden = true;
     },
     showOverlay(mode, detail = '') {
@@ -258,8 +315,25 @@ export function createHud(minimapWalls) {
     onBuyArmor(handler) {
       armorHandler = handler;
     },
-    drawMinimap(actors, bomb) {
+    showScoreboard(rows, history = []) {
+      scoreboard.hidden = false;
+      const historyLine = history.length
+        ? `<div class="score-history">Rounds: ${history.map((r) => `<span class="${r === 'W' ? 'win' : 'loss'}">${r}</span>`).join(' ')}</div>`
+        : '';
+      scoreRows.innerHTML = historyLine + rows.map((r) => `<div class="score-row ${r.team}"><span>${r.name}</span><span>${r.kills} K</span><span>${r.deaths} D</span><span>${r.alive ? '●' : '○'}</span></div>`).join('');
+    },
+    hideScoreboard() {
+      scoreboard.hidden = true;
+    },
+    drawMinimap(actors, bomb, ghosts = []) {
       drawMapBase();
+      for (const ghost of ghosts) {
+        const [mx, my] = toMap(ghost.x, ghost.z);
+        mapCtx.fillStyle = '#7d8590';
+        mapCtx.beginPath();
+        mapCtx.arc(mx, my, 2.5, 0, Math.PI * 2);
+        mapCtx.fill();
+      }
       for (const actor of actors) {
         if (!actor.alive) continue;
         const [mx, my] = toMap(actor.position.x, actor.position.z);

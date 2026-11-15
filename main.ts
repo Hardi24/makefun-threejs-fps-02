@@ -6,7 +6,9 @@
 // sounds and names: Vanguard (the player plus two bots) defends the Foundry (A) and Depot
 // (B) sites in an industrial yard against four Raider bots who try to plant a charge.
 // Rounds are won by elimination, by detonation, by defusal, or on the clock; money earned
-// between rounds buys four weapons and armour. First to 5 rounds takes the match.
+// between rounds buys five weapons and armour. First to 5 rounds takes the match.
+// The v3 build adds a fifth weapon (Riot-12 Scattergun), aim-down-sights, a death-cam,
+// a scoreboard, an event feed and a damage-direction indicator on top of that core.
 //
 // This program hands the game in. It copies game/ and screenshots/ from beside this file
 // to /output and writes /output/dossier.json, the summary the judge reads, with the

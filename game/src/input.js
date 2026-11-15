@@ -1,20 +1,22 @@
 // Keyboard and mouse, and the pointer lock that turns the mouse into look. Plain browser
-// APIs only: the game asks the canvas for pointer lock and reads movementX/Y while it holds it.
+// APIs only: the game asks the canvas for pointer lock and reads movementX/Y while it
+// holds it. Left button fires; right button aims down the sights; the scoreboard key is
+// read like any other through takePressed, so no input path is special-cased in main.js.
 export function createInput(canvas, onLockChange) {
   const keys = new Set();
-  const pressed = new Set();
-  const state = { keys, locked: false, firing: false, lookX: 0, lookY: 0 };
+  const fresh = new Set();
+  const state = { keys, locked: false, firing: false, aiming: false, lookX: 0, lookY: 0 };
 
-  function setKey(event, down) {
+  function trackKey(event, down) {
     if (down) {
       keys.add(event.code);
-      if (!event.repeat) pressed.add(event.code);
+      if (!event.repeat) fresh.add(event.code);
     } else keys.delete(event.code);
-    if (event.code === 'Space') event.preventDefault();
+    if (event.code === 'Space' || event.code === 'Tab') event.preventDefault();
   }
 
-  window.addEventListener('keydown', (event) => setKey(event, true));
-  window.addEventListener('keyup', (event) => setKey(event, false));
+  window.addEventListener('keydown', (event) => trackKey(event, true));
+  window.addEventListener('keyup', (event) => trackKey(event, false));
   window.addEventListener('blur', () => keys.clear());
   window.addEventListener('mousemove', (event) => {
     if (!state.locked) return;
@@ -22,16 +24,23 @@ export function createInput(canvas, onLockChange) {
     state.lookY += event.movementY;
   });
   window.addEventListener('mousedown', (event) => {
-    if (state.locked && event.button === 0) state.firing = true;
+    if (!state.locked) return;
+    if (event.button === 0) state.firing = true;
+    if (event.button === 2) state.aiming = true;
   });
   window.addEventListener('mouseup', (event) => {
     if (event.button === 0) state.firing = false;
+    if (event.button === 2) state.aiming = false;
+  });
+  window.addEventListener('contextmenu', (event) => {
+    if (state.locked) event.preventDefault();
   });
   document.addEventListener('pointerlockchange', () => {
     state.locked = document.pointerLockElement === canvas;
     if (!state.locked) {
       keys.clear();
       state.firing = false;
+      state.aiming = false;
     }
     onLockChange(state.locked);
   });
@@ -50,8 +59,8 @@ export function createInput(canvas, onLockChange) {
     },
     // Fresh key presses since the last call (no repeats, no held keys).
     takePressed() {
-      const out = [...pressed];
-      pressed.clear();
+      const out = [...fresh];
+      fresh.clear();
       return out;
     },
   };
