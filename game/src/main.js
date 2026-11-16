@@ -67,8 +67,36 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.getElementById('game').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color('#2b333d');
-scene.fog = new THREE.Fog(new THREE.Color('#2b333d'), 26, 70);
+// Dusk sky: a vertical gradient canvas — violet up top, ember orange at the
+// horizon — plus a low sun disc and halo. Warm haze fog matches the horizon.
+const skyCanvas = document.createElement('canvas');
+skyCanvas.width = 4;
+skyCanvas.height = 512;
+const skyG = skyCanvas.getContext('2d');
+const skyGrad = skyG.createLinearGradient(0, 0, 0, 512);
+skyGrad.addColorStop(0, '#171021');
+skyGrad.addColorStop(0.42, '#4a2030');
+skyGrad.addColorStop(0.6, '#a83f1d');
+skyGrad.addColorStop(0.72, '#e07b2e');
+skyGrad.addColorStop(1, '#33200f');
+skyG.fillStyle = skyGrad;
+skyG.fillRect(0, 0, 4, 512);
+const skyTex = new THREE.CanvasTexture(skyCanvas);
+skyTex.colorSpace = THREE.SRGBColorSpace;
+scene.background = skyTex;
+scene.fog = new THREE.Fog(new THREE.Color('#7a4526'), 26, 78);
+const sun = new THREE.Mesh(
+  new THREE.SphereGeometry(4, 16, 12),
+  new THREE.MeshBasicMaterial({ color: new THREE.Color('#ffd9a0'), fog: false }),
+);
+sun.position.set(38, 22, -115);
+scene.add(sun);
+const sunHalo = new THREE.Mesh(
+  new THREE.SphereGeometry(7, 16, 12),
+  new THREE.MeshBasicMaterial({ color: new THREE.Color('#ff9a3c'), transparent: true, opacity: 0.16, fog: false }),
+);
+sunHalo.position.copy(sun.position);
+scene.add(sunHalo);
 const camera = new THREE.PerspectiveCamera(74, window.innerWidth / window.innerHeight, 0.05, 140);
 scene.add(camera);
 
@@ -97,10 +125,8 @@ const playerBox = new THREE.Mesh(
 playerBox.userData.isPlayer = true;
 scene.add(playerBox);
 
-// Tracers: a small pool of fading lines, one per shot. Each tracer keeps its own
-// material, so a shot's colour can say who fired it: gold for the player, the
-// shooter's team colour for a bot. The pool is fixed at 24, so a long firefight
-// reuses the oldest line instead of allocating mid-round.
+// Tracers: a fixed pool of 24 fading lines, one per shot. Gold for the player,
+// the shooter's team colour for a bot; a long firefight reuses the oldest line.
 const tracers = [];
 for (let i = 0; i < 24; i += 1) {
   const geometry = new THREE.BufferGeometry();
@@ -168,6 +194,8 @@ const playerState = {
   alive: true,
   ownedWeapon: 'rifle',
   grenades: 0,
+  smokes: 0,
+  hasKit: false,
   defuseProgress: 0,
   kills: 0,
   deaths: 0,
@@ -200,7 +228,7 @@ const vanguardBots = bots.bots.filter((b) => b.team === 'vanguard');
 const raiderBots = bots.bots.filter((b) => b.team === 'raider');
 
 // What a bot can see: the player plus its Vanguard teammates for a Raider, the
-// four Raiders for a Vanguard bot. The player is wrapped as an actor so the bot
+// five Raiders for a Vanguard bot. The player is wrapped as an actor so the bot
 // code treats all enemies the same way.
 function playerActor() {
   return { isPlayer: true, position: body.position, alive: playerState.alive, name: 'You' };
@@ -212,8 +240,10 @@ function enemiesOf(bot) {
 }
 
 // Line of sight between two points: a ray from eye height to chest height, blocked
-// by any shootable surface. The 0.6 m slack at the end keeps a ray that grazes a
-// corner from counting as blocked.
+// by any shootable surface (0.6 m slack at the end, so a ray grazing a corner does
+// not count as blocked). A smoke cloud blocks sight too: a bot that loses line of
+// sight through smoke drops its target and rotates, and the player cannot be shot
+// through a cloud.
 function hasLineOfSight(fromPos, toPos) {
   const from = new THREE.Vector3(fromPos.x, fromPos.y + 1.5, fromPos.z);
   const to = new THREE.Vector3(toPos.x, toPos.y + 1.3, toPos.z);
@@ -224,7 +254,26 @@ function hasLineOfSight(fromPos, toPos) {
   losRaycaster.set(from, dir);
   losRaycaster.far = dist;
   const hit = losRaycaster.intersectObjects(world.shootables, false)[0];
-  return !hit || hit.distance > dist - 0.6;
+  if (hit && hit.distance <= dist - 0.6) return false;
+  for (const cloud of grenades.smokeClouds) {
+    const dx = to.x - from.x;
+    const dz = to.z - from.z;
+    const len2 = dx * dx + dz * dz;
+    let t = len2 > 0 ? ((cloud.x - from.x) * dx + (cloud.z - from.z) * dz) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    if (Math.hypot(cloud.x - (from.x + dx * t), cloud.z - (from.z + dz * t)) < cloud.radius) return false;
+  }
+  return true;
+}
+
+// Where a radio callout points: site, lane, or Mid — the names the feed uses so a
+// callout reads like a teammate talking, not a coordinate.
+function locationName(p) {
+  if (Math.hypot(p.x + 17, p.z + 13) < 9) return 'Foundry';
+  if (Math.hypot(p.x - 17, p.z + 13) < 9) return 'Depot';
+  if (p.z > 8) return 'Spawn';
+  if (Math.abs(p.z) < 8) return 'Mid';
+  return p.x < 0 ? 'West lane' : 'East lane';
 }
 
 function syncCamera() {
@@ -392,14 +441,19 @@ function detonateGrenade(position, owner) {
   }
 }
 
-function throwPlayerGrenade() {
-  if (match.phase !== 'round' || !playerState.alive || playerState.grenades <= 0) return;
+function throwPlayerGrenade(kind = 'frag') {
+  if (match.phase !== 'round' || !playerState.alive) return;
+  const count = kind === 'smoke' ? playerState.smokes : playerState.grenades;
+  if (count <= 0) return;
   camera.getWorldDirection(direction);
-  const thrown = grenades.toss(camera.position.clone(), direction.clone(), 16, { team: 'vanguard', name: 'You', isPlayer: true });
+  const thrown = grenades.toss(camera.position.clone(), direction.clone(), 16, { team: 'vanguard', name: 'You', isPlayer: true }, kind);
   if (!thrown) return;
-  playerState.grenades -= 1;
-  hud.setGrenades(playerState.grenades);
-  hud.showToast(playerState.grenades > 0 ? `Frag out — ${playerState.grenades} left` : 'Frag out — none left, buy more next round');
+  if (kind === 'smoke') playerState.smokes -= 1;
+  else playerState.grenades -= 1;
+  hud.setGrenades(playerState.grenades, playerState.smokes);
+  hud.showToast(kind === 'smoke'
+    ? `Smoke out — ${playerState.smokes} left`
+    : `Frag out — ${playerState.grenades} left`);
   sounds.throwGrenade();
 }
 
@@ -431,18 +485,21 @@ function shootPlayer(spread) {
   return true;
 }
 
-// Spawn the teams for a round: Vanguard bots at the two site doors, Raiders split
-// 3-and-1 across the sites, the carrier travelling with the three-bot main push.
+// Spawn the teams for a round: Vanguard bots hold the site doors and the south
+// lanes, Raiders split 3-and-2 across the sites, the carrier travelling with the
+// three-bot main push.
 function placeTeams() {
-  // Vanguard bots hold the two site doors; Raiders split 3-and-1 across the sites.
   const pushSite = random() < 0.5 ? 'A' : 'B';
   const feintSite = pushSite === 'A' ? 'B' : 'A';
   vanguardBots[0].postNode = 10;
   vanguardBots[1].postNode = 11;
+  vanguardBots[2].postNode = 4;
+  vanguardBots[3].postNode = 5;
   bots.place(vanguardBots[0], -3, 17, 0);
   bots.place(vanguardBots[1], 3, 17, 0);
-  vanguardBots[0].armor = 0;
-  vanguardBots[1].armor = 0;
+  bots.place(vanguardBots[2], -7, 17, 0);
+  bots.place(vanguardBots[3], 7, 17, 0);
+  for (const bot of vanguardBots) bot.armor = 0;
   // The carrier travels with the three-bot main push, not the solo lurker: the group
   // draws the defenders, and the carrier slips in behind the fight to plant.
   const carrier = raiderBots[Math.floor(random() * 3)];
@@ -488,8 +545,8 @@ function startBuyPhase() {
   hud.setTimer(ROUND_TIME);
   hud.setBomb('none', 0);
   hud.setHint('');
-  hud.setPips(3, 4);
-  hud.showBuy(playerState.money, match.buyTime, playerState.ownedWeapon, false, playerState.grenades);
+  hud.setPips(5, 5);
+  hud.showBuy(playerState.money, match.buyTime, playerState.ownedWeapon, false, playerState.grenades, playerState.smokes, playerState.hasKit);
   hud.showBanner(`ROUND ${match.round}`, 'Buy phase — spend your money, then deploy.', 2600);
   syncCamera();
 }
@@ -573,6 +630,8 @@ function resetMatch() {
   playerState.money = START_MONEY;
   playerState.ownedWeapon = 'rifle';
   playerState.grenades = 0;
+  playerState.smokes = 0;
+  playerState.hasKit = false;
   playerState.kills = 0;
   playerState.deaths = 0;
   startBuyPhase();
@@ -596,7 +655,7 @@ function buyWeapon(weaponId) {
   weapon.refill();
   hud.setMoney(playerState.money);
   hud.setAmmo(weapon.state.mag, weapon.state.reserve, weaponId);
-  hud.showBuy(playerState.money, match.buyTime, playerState.ownedWeapon, playerState.armor > 0, playerState.grenades);
+  hud.showBuy(playerState.money, match.buyTime, playerState.ownedWeapon, playerState.armor > 0, playerState.grenades, playerState.smokes, playerState.hasKit);
   sounds.buy();
 }
 
@@ -609,22 +668,41 @@ function buyArmor() {
   playerState.armor = 50;
   hud.setMoney(playerState.money);
   hud.setHealth(playerState.health, playerState.armor);
-  hud.showBuy(playerState.money, match.buyTime, playerState.ownedWeapon, true, playerState.grenades);
+  hud.showBuy(playerState.money, match.buyTime, playerState.ownedWeapon, true, playerState.grenades, playerState.smokes, playerState.hasKit);
   sounds.buy();
 }
 
-const GRENADE_PRICE = 300;
+const FRAG_PRICE = 300;
+const SMOKE_PRICE = 250;
 const GRENADE_MAX = 2;
-function buyGrenade() {
-  if (match.phase !== 'buy' || playerState.grenades >= GRENADE_MAX || playerState.money < GRENADE_PRICE) {
+function buyGrenade(kind = 'frag') {
+  const price = kind === 'smoke' ? SMOKE_PRICE : FRAG_PRICE;
+  const owned = kind === 'smoke' ? playerState.smokes : playerState.grenades;
+  if (match.phase !== 'buy' || owned >= GRENADE_MAX || playerState.money < price) {
     sounds.deny();
     return;
   }
-  playerState.money -= GRENADE_PRICE;
-  playerState.grenades += 1;
+  playerState.money -= price;
+  if (kind === 'smoke') playerState.smokes += 1;
+  else playerState.grenades += 1;
   hud.setMoney(playerState.money);
-  hud.setGrenades(playerState.grenades);
-  hud.showBuy(playerState.money, match.buyTime, playerState.ownedWeapon, playerState.armor > 0, playerState.grenades);
+  hud.setGrenades(playerState.grenades, playerState.smokes);
+  hud.showBuy(playerState.money, match.buyTime, playerState.ownedWeapon, playerState.armor > 0, playerState.grenades, playerState.smokes, playerState.hasKit);
+  sounds.buy();
+}
+
+// The defuse kit: a one-off buy that halves the defuse channel, 5 s to 2.5 s —
+// the difference between a defuse that lands and one a Raider interrupts.
+const KIT_PRICE = 400;
+function buyKit() {
+  if (match.phase !== 'buy' || playerState.hasKit || playerState.money < KIT_PRICE) {
+    sounds.deny();
+    return;
+  }
+  playerState.money -= KIT_PRICE;
+  playerState.hasKit = true;
+  hud.setMoney(playerState.money);
+  hud.showBuy(playerState.money, match.buyTime, playerState.ownedWeapon, playerState.armor > 0, playerState.grenades, playerState.smokes, true);
   sounds.buy();
 }
 
@@ -649,6 +727,8 @@ hud.onPlay(() => {
 hud.onBuy(buyWeapon);
 hud.onBuyArmor(buyArmor);
 hud.onBuyGrenade(buyGrenade);
+hud.onBuySmoke(buyGrenade);
+hud.onBuyKit(buyKit);
 
 renderer.domElement.addEventListener('click', () => {
   if (shot) return;
@@ -669,7 +749,7 @@ function onLockChange(locked) {
 // game before the first round starts.
 function stepBuy(dt) {
   match.buyTime -= dt;
-  hud.showBuy(playerState.money, Math.max(0, match.buyTime), playerState.ownedWeapon, playerState.armor > 0, playerState.grenades);
+  hud.showBuy(playerState.money, Math.max(0, match.buyTime), playerState.ownedWeapon, playerState.armor > 0, playerState.grenades, playerState.smokes, playerState.hasKit);
   for (const code of input.takePressed()) {
     if (code === 'Digit1') buyWeapon('pistol');
     else if (code === 'Digit2') buyWeapon('smg');
@@ -677,7 +757,9 @@ function stepBuy(dt) {
     else if (code === 'Digit4') buyWeapon('shotgun');
     else if (code === 'Digit5') buyWeapon('marksman');
     else if (code === 'Digit6') buyArmor();
-    else if (code === 'Digit7') buyGrenade();
+    else if (code === 'Digit7') buyGrenade('frag');
+    else if (code === 'Digit8') buyGrenade('smoke');
+    else if (code === 'Digit9') buyKit();
     else if (code === 'KeyM') {
       muted = sounds.setMuted(!muted);
       hud.showToast(muted ? 'Sound muted (M to unmute)' : 'Sound on');
@@ -718,8 +800,8 @@ function stepRound(dt) {
     if (body.stepped) sounds.footstep();
     if (body.landed) sounds.land();
     // Aim down the sights: narrower field of view, tighter spread, slower feet.
-    // The zoom is the weapon's own: the marksman pulls in tight, the scattergun
-    // barely narrows at all.
+// The zoom is the weapon's own: the marksman pulls in tight, the scattergun
+// barely narrows at all.
     const aiming = input.state.aiming;
     const targetFov = aiming ? weapon.def().adsFov : 74;
     if (Math.abs(camera.fov - targetFov) > 0.05) {
@@ -729,7 +811,8 @@ function stepRound(dt) {
     hud.setAiming(aiming);
     for (const code of input.takePressed()) {
       if (code === 'KeyF') weapon.inspect();
-      else if (code === 'KeyG') throwPlayerGrenade();
+      else if (code === 'KeyG') throwPlayerGrenade('frag');
+      else if (code === 'KeyH') throwPlayerGrenade('smoke');
       else if (code === 'KeyM') {
         muted = sounds.setMuted(!muted);
         hud.showToast(muted ? 'Sound muted (M to unmute)' : 'Sound on');
@@ -743,13 +826,14 @@ function stepRound(dt) {
       sounds.reload();
     }
     if (input.state.keys.has('KeyR') && weapon.reload()) sounds.reload();
-    // Defuse: hold E beside a planted charge.
+    // Defuse: hold E beside a planted charge. A defuse kit halves the channel.
     if (match.bombState === 'planted' && input.state.keys.has('KeyE')) {
       const d = Math.hypot(match.bombPosition.x - body.position.x, match.bombPosition.z - body.position.z);
       if (d < 2.6) {
+        const defuseSeconds = playerState.hasKit ? 2.5 : DEFUSE_SECONDS;
         playerState.defuseProgress += dt;
-        hud.setHint(`DEFUSING… ${playerState.defuseProgress.toFixed(1)}s / ${DEFUSE_SECONDS}s — hold E, stay close.`);
-        if (playerState.defuseProgress >= DEFUSE_SECONDS) {
+        hud.setHint(`DEFUSING… ${playerState.defuseProgress.toFixed(1)}s / ${defuseSeconds}s — hold E, stay close.`);
+        if (playerState.defuseProgress >= defuseSeconds) {
           playerState.defuseProgress = 0;
           playerState.money += DEFUSE_REWARD;
           hud.setMoney(playerState.money);
@@ -775,6 +859,11 @@ function stepRound(dt) {
     random,
     enemiesOf,
     hasLineOfSight,
+    // A radio callout lands in the event feed when a bot shares a fresh sighting:
+    // the player hears what the squad sees, with a place name instead of a dot.
+    onCallout: (bot, pos) => {
+      hud.addEvent(`<span class="${bot.team}">RADIO ${bot.name}</span> — Contact ${locationName(pos)}, rotating.`);
+    },
     bombState: match.bombState,
     bombSite: match.bombSite,
     bombPosition: match.bombPosition || new THREE.Vector3(),
@@ -867,7 +956,7 @@ function updateOverlays() {
 function step(dt) {
   elapsed += dt;
   world.stepDust(elapsed);
-  grenades.step(dt, { time: elapsed, random, onDetonate: detonateGrenade });
+  grenades.step(dt, { time: elapsed, random, onDetonate: detonateGrenade, onSmoke: () => sounds.smoke() });
   for (const tracer of tracers) {
     if (tracer.life > 0) {
       tracer.life -= dt;
@@ -952,8 +1041,8 @@ function runShot(name) {
     hud.setMoney(START_MONEY);
     hud.setHealth(100, 0);
     hud.setAmmo(30, 90, 'rifle');
-    hud.setGrenades(0);
-    hud.setPips(3, 4);
+    hud.setGrenades(0, 0);
+    hud.setPips(5, 5);
     hud.drawMinimap(
       bots.bots.map((b) => ({ position: b.position, alive: b.alive, team: b.team, isPlayer: false, yaw: b.yaw }))
         .concat([{ position: body.position, alive: true, team: 'vanguard', isPlayer: true, yaw: body.yaw }]),
@@ -962,6 +1051,7 @@ function runShot(name) {
   } else if (name === 'buy') {
     playerState.money = 2400;
     playerState.grenades = 1;
+    playerState.smokes = 1;
     match.round = 2;
     match.scoreV = 1;
     match.scoreR = 1;
@@ -981,15 +1071,13 @@ function runShot(name) {
     match.scoreR = 1;
     playerState.money = 1400;
     playerState.grenades = 2;
-    hud.setGrenades(2);
+    playerState.smokes = 1;
+    hud.setGrenades(2, 1);
     startBuyPhase();
     startRound();
-    // Let the bots push for a second and a half, then step up to Mid for the frame:
-    // the two Vanguard bots stay behind the camera instead of blocking it, and the
-    // Raiders are close enough to read. Patch the player back to full health first:
-    // the Raiders can land shots down Mid during the settle, and the capture is of
-    // a live firefight, not of a death. Then take the shot, re-aiming at the moving
-    // Raider each time: three rifle rounds drop one, which puts a kill in the feed.
+    // Let the bots push for a second and a half, then step up to Mid for the frame.
+    // Patch the player back to full health first: the Raiders can land shots down
+    // Mid during the settle, and the capture is of a live firefight, not a death.
     settle(90);
     playerState.health = 100;
     playerState.alive = true;
@@ -1028,7 +1116,19 @@ function runShot(name) {
       const origin = camera.position.clone();
       if (grenades.lob(origin, point, 0.9, { team: 'vanguard', name: 'You', isPlayer: true })) {
         playerState.grenades -= 1;
-        hud.setGrenades(playerState.grenades);
+        hud.setGrenades(playerState.grenades, playerState.smokes);
+        settle(84);
+        settle(6);
+      }
+    }
+    // Then a smoke across Mid: lobbed at the far end of the lane, not at a bot,
+    // so the capture shows the grey cloud hanging over the yard while the
+    // Raiders stay visible around it.
+    if (playerState.smokes > 0) {
+      aimAt(new THREE.Vector3(0, 1.0, -8));
+      if (grenades.lob(camera.position.clone(), new THREE.Vector3(0, 1.0, -8), 0.9, { team: 'vanguard', name: 'You', isPlayer: true }, 'smoke')) {
+        playerState.smokes -= 1;
+        hud.setGrenades(playerState.grenades, playerState.smokes);
         settle(84);
         settle(6);
       }
@@ -1103,6 +1203,8 @@ window.__game = {
   get playerAlive() { return playerState.alive; },
   get money() { return playerState.money; },
   get grenades() { return playerState.grenades; },
+  get smokes() { return playerState.smokes; },
+  get hasKit() { return playerState.hasKit; },
   get bombState() { return match.bombState; },
   get vanguardAlive() { return (playerState.alive ? 1 : 0) + bots.aliveCount('vanguard'); },
   get raiderAlive() { return bots.aliveCount('raider'); },
@@ -1123,6 +1225,6 @@ hud.setTimer(ROUND_TIME);
 hud.setMoney(START_MONEY);
 hud.setHealth(100, 0);
 hud.setAmmo(30, 90, 'rifle');
-hud.setPips(3, 4);
+hud.setPips(5, 5);
 if (shot) runShot(shot);
 else requestAnimationFrame(frame);

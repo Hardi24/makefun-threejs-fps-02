@@ -9,7 +9,7 @@ import { WEAPONS, WEAPON_ORDER } from './weapon.js';
 const COPY = {
   start: {
     title: 'Dustline Yard',
-    copy: 'Vanguard defends two sites — Foundry and Depot — against four Raiders. Win the round by stopping the plant, defusing the charge, or dropping every Raider. Buy a Spark-9 frag grenade and press G to clear a corner no rifle can reach.',
+    copy: 'Vanguard defends two sites — Foundry and Depot — against five Raiders. Win the round by stopping the plant, defusing the charge, or dropping every Raider. Buy a Spark-9 frag grenade (G) to clear a corner no rifle can reach, or a smoke grenade (H) to cross Mid unseen.',
     action: 'Click to play',
   },
   paused: {
@@ -84,6 +84,7 @@ export function createHud(minimapWalls) {
   let reserveCache = -1;
   let weaponCache = '';
   let grenadeCache = -1;
+  let smokeCache = -1;
   let healthCache = -1;
   let armorCache = -1;
   let moneyCache = -1;
@@ -91,9 +92,8 @@ export function createHud(minimapWalls) {
   let scoreCache = '';
   let pipsCache = '';
 
-  // Minimap: static walls drawn once per frame, dots for every living actor, and
-  // ghost dots where a Vanguard bot last saw an enemy. The player's facing tick
-  // shows which way the camera looks.
+  // Minimap: static walls, dots for every living actor, ghost dots where a
+  // Vanguard bot last saw an enemy, and a tick for the player's facing.
   const mapCtx = minimap.getContext('2d');
   const MAP_W = 48;
   const MAP_H = 40;
@@ -123,9 +123,25 @@ export function createHud(minimapWalls) {
     }
   }
 
-  // Buy menu cards, built once; prices and affordability update per phase. Each card
-  // carries three stat bars (damage per shot, fire rate, range) plus the headshot
-  // multiplier, so the shop teaches the weapons instead of hiding them.
+  // Buy menu cards, grouped into sections like a real tactical shop: Sidearms,
+  // Rifles, Close Range, Gear, Grenades. Weapon cards carry three stat bars plus
+  // the headshot multiplier, so the shop teaches the weapons.
+  const BUY_KEY = { pistol: '1', smg: '2', rifle: '3', shotgun: '4', marksman: '5' };
+  const BUY_ROW = { pistol: 'sidearm', smg: 'close', rifle: 'rifle', shotgun: 'close', marksman: 'rifle' };
+  function section(title) {
+    const wrap = document.createElement('div');
+    wrap.className = 'buy-section';
+    wrap.innerHTML = `<h3>${title}</h3><div class="buy-row"></div>`;
+    buyGrid.appendChild(wrap);
+    return wrap.querySelector('.buy-row');
+  }
+  const rows = {
+    sidearm: section('Sidearms'),
+    rifle: section('Rifles'),
+    close: section('Close Range'),
+    gear: section('Gear'),
+    grenade: section('Grenades'),
+  };
   const buyButtons = {};
   for (const id of WEAPON_ORDER) {
     const def = WEAPONS[id];
@@ -138,8 +154,8 @@ export function createHud(minimapWalls) {
       + meter('DMG', def.damage * (def.pellets || 1), STAT_TOP.damage)
       + meter('RPM', rate, STAT_TOP.rate)
       + meter('RNG', def.range, STAT_TOP.range)
-      + `<i>${WEAPON_ORDER.indexOf(id) + 1}</i>`;
-    buyGrid.appendChild(button);
+      + `<i>${BUY_KEY[id]}</i>`;
+    rows[BUY_ROW[id]].appendChild(button);
     buyButtons[id] = button;
   }
   const armorButton = document.createElement('button');
@@ -148,8 +164,17 @@ export function createHud(minimapWalls) {
   armorButton.dataset.armor = '1';
   armorButton.innerHTML = '<b>Plated Vest</b><span>$400 · +50 armour</span>'
     + meter('ARM', 50, 50)
-    + `<i>${WEAPON_ORDER.length + 1}</i>`;
-  buyGrid.appendChild(armorButton);
+    + '<i>6</i>';
+  rows.gear.appendChild(armorButton);
+  // The defuse kit's card: half the defuse channel, bought once per match.
+  const kitButton = document.createElement('button');
+  kitButton.type = 'button';
+  kitButton.className = 'buy-card';
+  kitButton.dataset.kit = '1';
+  kitButton.innerHTML = '<b>Defuse Kit</b><span>$400 · defuse 5s → 2.5s</span>'
+    + meter('KIT', 1, 1)
+    + '<i>9</i>';
+  rows.gear.appendChild(kitButton);
   // The frag grenade's card: blast damage on the bar, radius and the two-carry
   // limit in the line, so the shop teaches the grenade like any weapon.
   const grenadeButton = document.createElement('button');
@@ -158,19 +183,34 @@ export function createHud(minimapWalls) {
   grenadeButton.dataset.grenade = '1';
   grenadeButton.innerHTML = '<b>Spark-9 Frag</b><span class="grenade-line">$300 · blast 130 · radius 7 m · max 2</span>'
     + meter('BLST', 130, 130)
-    + `<i>${WEAPON_ORDER.length + 2}</i>`;
-  buyGrid.appendChild(grenadeButton);
+    + '<i>7</i>';
+  rows.grenade.appendChild(grenadeButton);
   const grenadeLine = grenadeButton.querySelector('.grenade-line');
+  // The smoke grenade's card: cloud duration on the bar, radius and the carry
+  // limit in the line — the tool for crossing Mid unseen.
+  const smokeButton = document.createElement('button');
+  smokeButton.type = 'button';
+  smokeButton.className = 'buy-card';
+  smokeButton.dataset.smoke = '1';
+  smokeButton.innerHTML = '<b>Veil Smoke</b><span class="smoke-line">$250 · blocks sight 15 s · radius 4 m · max 2</span>'
+    + meter('COVR', 15, 15)
+    + '<i>8</i>';
+  rows.grenade.appendChild(smokeButton);
+  const smokeLine = smokeButton.querySelector('.smoke-line');
 
   let buyHandler = null;
   let armorHandler = null;
   let grenadeHandler = null;
+  let smokeHandler = null;
+  let kitHandler = null;
   buyGrid.addEventListener('click', (event) => {
     const card = event.target.closest('.buy-card');
     if (!card) return;
     if (card.dataset.weapon) buyHandler?.(card.dataset.weapon);
     else if (card.dataset.armor) armorHandler?.();
-    else if (card.dataset.grenade) grenadeHandler?.();
+    else if (card.dataset.grenade) grenadeHandler?.('frag');
+    else if (card.dataset.smoke) smokeHandler?.('smoke');
+    else if (card.dataset.kit) kitHandler?.();
   });
 
   function feed(container, html, holdMs) {
@@ -226,8 +266,8 @@ export function createHud(minimapWalls) {
       const text = `${vanguardAlive}/${raiderAlive}`;
       if (text === pipsCache) return;
       pipsCache = text;
-      pipsV.textContent = '●'.repeat(vanguardAlive) + '○'.repeat(Math.max(0, 3 - vanguardAlive));
-      pipsR.textContent = '●'.repeat(raiderAlive) + '○'.repeat(Math.max(0, 4 - raiderAlive));
+      pipsV.textContent = '●'.repeat(vanguardAlive) + '○'.repeat(Math.max(0, 5 - vanguardAlive));
+      pipsR.textContent = '●'.repeat(raiderAlive) + '○'.repeat(Math.max(0, 5 - raiderAlive));
     },
     // The bomb chip: hidden until a charge is being planted or is armed, red
     // while the timer runs, and counting down in whole seconds.
@@ -273,8 +313,7 @@ export function createHud(minimapWalls) {
       feed(killfeed, `<span class="${killerTeam}">${killer}</span> ${headshot ? '⌖' : '✕'} <span>${victim}</span>${headshot ? ' <span class="hs">HEADSHOT</span>' : ''}${cause === 'grenade' ? ' <span class="hs">FRAG</span>' : ''}`, holdMs);
     },
     // Captures re-show the feed with long holds: under a slow software renderer
-    // the 6 s lines can lapse between the shot and the screenshot, so the frame
-    // is pinned from a cleared feed instead of from whatever is left.
+    // the 6 s lines can lapse between the shot and the screenshot.
     clearFeeds() {
       killfeed.innerHTML = '';
       eventfeed.innerHTML = '';
@@ -317,13 +356,14 @@ export function createHud(minimapWalls) {
     onPlay(handler) {
       play.addEventListener('click', handler);
     },
-    setGrenades(count) {
-      if (count === grenadeCache) return;
-      grenadeCache = count;
-      grenadeCount.textContent = String(count);
-      grenadeChip.hidden = count <= 0;
+    setGrenades(frag, smoke = 0) {
+      if (frag === grenadeCache && smoke === smokeCache) return;
+      grenadeCache = frag;
+      smokeCache = smoke;
+      grenadeCount.textContent = `FRAG ×${frag} · SMOKE ×${smoke}`;
+      grenadeChip.hidden = frag + smoke <= 0;
     },
-    showBuy(money, secondsLeft, ownedWeapon, hasArmor, grenades = 0) {
+    showBuy(money, secondsLeft, ownedWeapon, hasArmor, frag = 0, smoke = 0, hasKit = false) {
       buyMenu.hidden = false;
       buyMoney.textContent = `$${money}`;
       buyTimer.textContent = `Buy phase — ${Math.ceil(secondsLeft)}s`;
@@ -334,11 +374,18 @@ export function createHud(minimapWalls) {
       }
       armorButton.classList.toggle('owned', hasArmor);
       armorButton.classList.toggle('cant', hasArmor || money < 400);
-      grenadeButton.classList.toggle('owned', grenades >= 2);
-      grenadeButton.classList.toggle('cant', grenades >= 2 || money < 300);
-      grenadeLine.textContent = grenades > 0
-        ? `Owned ×${grenades} — $300 each · blast 130 · radius 7 m`
+      kitButton.classList.toggle('owned', hasKit);
+      kitButton.classList.toggle('cant', hasKit || money < 400);
+      grenadeButton.classList.toggle('owned', frag >= 2);
+      grenadeButton.classList.toggle('cant', frag >= 2 || money < 300);
+      grenadeLine.textContent = frag > 0
+        ? `Owned ×${frag} — $300 each · blast 130 · radius 7 m`
         : '$300 · blast 130 · radius 7 m · max 2';
+      smokeButton.classList.toggle('owned', smoke >= 2);
+      smokeButton.classList.toggle('cant', smoke >= 2 || money < 250);
+      smokeLine.textContent = smoke > 0
+        ? `Owned ×${smoke} — $250 each · blocks sight 15 s · radius 4 m`
+        : '$250 · blocks sight 15 s · radius 4 m · max 2';
     },
     hideBuy() {
       buyMenu.hidden = true;
@@ -351,6 +398,12 @@ export function createHud(minimapWalls) {
     },
     onBuyGrenade(handler) {
       grenadeHandler = handler;
+    },
+    onBuySmoke(handler) {
+      smokeHandler = handler;
+    },
+    onBuyKit(handler) {
+      kitHandler = handler;
     },
     showScoreboard(rows, history = []) {
       scoreboard.hidden = false;

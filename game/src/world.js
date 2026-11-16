@@ -57,6 +57,8 @@ export const SPAWNS = {
     new THREE.Vector3(0, 0, 16),
     new THREE.Vector3(-3, 0, 17),
     new THREE.Vector3(3, 0, 17),
+    new THREE.Vector3(-7, 0, 17),
+    new THREE.Vector3(7, 0, 17),
   ],
   raider: [
     new THREE.Vector3(0, 0, -17),
@@ -398,13 +400,13 @@ export function createWorld(scene) {
     dustGeo.attributes.position.needsUpdate = true;
   }
 
-  // Light: a warm key from the south-east, a cool fill from the north, sky/ground gradient.
-  // The yard is lit like late afternoon, not night: the ground bounce is light enough
-  // that the floor and the low cover read from across the map.
-  const sky = new THREE.HemisphereLight(new THREE.Color('#aab8c8'), new THREE.Color('#4a5158'), 1.5);
+  // Light: a low amber key from the north-east, where the sun sits, a cool fill
+  // from the north, sky/ground gradient. Dusk, not night: the ground bounce stays
+  // light enough that the floor and low cover read from across the map.
+  const sky = new THREE.HemisphereLight(new THREE.Color('#e8a06a'), new THREE.Color('#3a2a22'), 1.5);
   scene.add(sky);
-  const key = new THREE.DirectionalLight(new THREE.Color('#fff2d8'), 2.8);
-  key.position.set(14, 18, 12);
+  const key = new THREE.DirectionalLight(new THREE.Color('#ffb066'), 2.8);
+  key.position.set(24, 16, -28);
   key.target.position.set(0, 0, -4);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);

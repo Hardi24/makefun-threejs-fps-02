@@ -1,10 +1,11 @@
-// Frag grenades: the one tool that clears a corner no rifle can. A thrown grenade
-// flies an arc, bounces off the world, fuses for 1.4 s, then detonates: a flash, a
-// shockwave light and a spray of debris, and blast damage that falls off with range
-// and stops at walls — a defender behind a container lives, one in the open does
-// not. The thrower names the owner, so the blast only hurts the other team. A fixed
-// pool of four slots means a long round never allocates mid-flight, and every random
-// number comes from the caller's seeded source, so a seeded capture replays exactly.
+// Frag grenades clear a corner no rifle can; smoke grenades blind it. A thrown
+// grenade flies an arc, bounces off the world, fuses for 1.4 s, then detonates: a
+// frag bursts with blast damage that falls off with range and stops at walls, a
+// smoke blooms into a grey cloud that blocks sight for 15 s — bots lose their
+// target through it, and so does the player. The thrower names the owner, so a
+// blast only hurts the other team. A fixed pool of six slots means a long round
+// never allocates mid-flight — five Raiders can each hold a frag and the player
+// can still throw — and every random number comes from the caller's seeded source,
 import * as THREE from 'three';
 
 const GRAVITY = 12;
@@ -12,9 +13,11 @@ const FUSE = 1.4;
 const BLAST_RADIUS = 7;
 const BLAST_CENTER = 130;
 const BLAST_EDGE = 25;
+const SMOKE_RADIUS = 4;
+const SMOKE_SECONDS = 15;
 const RADIUS = 0.12;
 const RESTITUTION = 0.45;
-const MAX_LIVE = 4;
+const MAX_LIVE = 6;
 const DEBRIS = 26;
 const BURST_SECONDS = 0.6;
 
@@ -54,8 +57,17 @@ export function createGrenades(scene, world) {
     debris.visible = false;
     debris.frustumCulled = false;
     scene.add(debris);
+    // The smoke cloud: one grey sphere per slot, scaled to the cloud radius when
+    // a smoke detonates. Each slot owns its material, so fading one cloud never
+    // touches another.
+    const smoke = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 12, 8),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color('#8f959c'), transparent: true, opacity: 0.5, depthWrite: false }),
+    );
+    smoke.visible = false;
+    scene.add(smoke);
     slots.push({
-      state: 'idle', mesh, burst, light, debris,
+      state: 'idle', mesh, burst, light, debris, smoke, kind: 'frag',
       position: new THREE.Vector3(), velocity: new THREE.Vector3(),
       fuse: 0, owner: null, age: 0, debrisVel: new Float32Array(DEBRIS * 3),
     });
@@ -67,7 +79,7 @@ export function createGrenades(scene, world) {
 
   // A lob that lands on the target after flightTime seconds: the arc is solved, not
   // guessed, so a bot's grenade and a capture's grenade land where they were aimed.
-  function lob(origin, target, flightTime, owner) {
+  function lob(origin, target, flightTime, owner, kind = 'frag') {
     const slot = freeSlot();
     if (!slot) return false;
     const t = Math.max(0.3, flightTime);
@@ -79,6 +91,7 @@ export function createGrenades(scene, world) {
     );
     slot.fuse = FUSE;
     slot.owner = owner;
+    slot.kind = kind;
     slot.state = 'flying';
     slot.mesh.visible = true;
     slot.mesh.position.copy(origin);
@@ -86,7 +99,7 @@ export function createGrenades(scene, world) {
   }
 
   // A free throw down the aim direction: fast and flat, for clearing the lane ahead.
-  function toss(origin, direction, speed, owner) {
+  function toss(origin, direction, speed, owner, kind = 'frag') {
     const slot = freeSlot();
     if (!slot) return false;
     slot.position.copy(origin);
@@ -94,6 +107,7 @@ export function createGrenades(scene, world) {
     slot.velocity.y += 3.5;
     slot.fuse = FUSE;
     slot.owner = owner;
+    slot.kind = kind;
     slot.state = 'flying';
     slot.mesh.visible = true;
     slot.mesh.position.copy(origin);
@@ -101,10 +115,22 @@ export function createGrenades(scene, world) {
   }
 
   function detonate(slot, ctx) {
-    slot.state = 'burst';
-    slot.age = 0;
     slot.mesh.visible = false;
     slot.mesh.material.emissiveIntensity = 0;
+    // A smoke blooms instead of bursting: no damage, no debris — just the cloud,
+    // squashed flat so it hangs over the lane like a bank of fog.
+    if (slot.kind === 'smoke') {
+      slot.state = 'smoke';
+      slot.age = 0;
+      slot.smoke.position.copy(slot.position);
+      slot.smoke.scale.set(SMOKE_RADIUS, SMOKE_RADIUS * 0.55, SMOKE_RADIUS);
+      slot.smoke.material.opacity = 0.5;
+      slot.smoke.visible = true;
+      ctx.onSmoke?.(slot.position.clone());
+      return;
+    }
+    slot.state = 'burst';
+    slot.age = 0;
     slot.burst.position.copy(slot.position);
     slot.burst.visible = true;
     slot.light.position.copy(slot.position).y += 0.6;
@@ -154,6 +180,15 @@ export function createGrenades(scene, world) {
         : 0.6;
       slot.fuse -= dt;
       if (slot.fuse <= 0) detonate(slot, ctx);
+    } else if (slot.state === 'smoke') {
+      // The cloud hangs, then thins out over its last three seconds.
+      slot.age += dt;
+      if (slot.age >= SMOKE_SECONDS) {
+        slot.state = 'idle';
+        slot.smoke.visible = false;
+        return;
+      }
+      if (slot.age > SMOKE_SECONDS - 3) slot.smoke.material.opacity = 0.5 * (SMOKE_SECONDS - slot.age) / 3;
     } else if (slot.state === 'burst') {
       slot.age += dt;
       const t = slot.age / BURST_SECONDS;
@@ -184,6 +219,13 @@ export function createGrenades(scene, world) {
     toss,
     get liveCount() {
       return slots.filter((slot) => slot.state !== 'idle').length;
+    },
+    // Live smoke clouds, for line-of-sight checks: a ray through a cloud is
+    // blocked, so bots and blasts alike lose their target behind smoke.
+    get smokeClouds() {
+      return slots
+        .filter((slot) => slot.state === 'smoke')
+        .map((slot) => ({ x: slot.position.x, z: slot.position.z, radius: SMOKE_RADIUS }));
     },
     step(dt, ctx) {
       for (const slot of slots) stepSlot(slot, dt, ctx);

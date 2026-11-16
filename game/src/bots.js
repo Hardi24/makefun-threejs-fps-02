@@ -1,14 +1,13 @@
-// The bots: two Vanguard defenders (the player is the third) against four Raider
-// attackers. Each bot walks the waypoint graph on breadth-first routes, holds a post or
-// pushes a site, and fights when it can see an enemy: sight is a real raycast against
-// the world, aim error shrinks the longer it holds a target, and fire comes in bursts
-// with pauses, so a bot is dangerous but beatable. Taking a hit breaks a bot's aim —
-// its aim error resets, so landing the first shot matters. Bots call out what they see:
-// a sighting is shared with living teammates as a last-seen mark, so a defender that
-// spots a push can pull its partner over, and a Raider that spots a defender can pull
-// its squad in. The Raider carrying the charge plants it at a site while one teammate
-// walks escort beside it; a Vanguard bot defuses a planted charge if it can reach it.
-// Bots never see through walls and never hit what they cannot see.
+// The bots: four Vanguard defenders (the player is the fifth) against five Raider
+// attackers. Each bot walks the waypoint graph on breadth-first routes, holds a post
+// or pushes a site, and fights when it can see an enemy: sight is a real raycast,
+// aim error shrinks the longer it holds a target, and fire comes in bursts with
+// pauses, so a bot is dangerous but beatable. Taking a hit breaks a bot's aim. Bots
+// call out what they see: a sighting is shared with living teammates as a last-seen
+// mark, so the squad rotates to a push one bot spotted. The Raider carrying the
+// charge plants it at a site while one teammate walks escort; a Vanguard bot defuses
+// a planted charge if it can reach it. Bots never see through walls and never hit
+// what they cannot see.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { WAYPOINTS, WAYPOINT_EDGES, SITES } from './world.js';
@@ -32,8 +31,8 @@ const DEFUSE_SECONDS = 5;
 const CALLOUT_FRESH_SECONDS = 4;
 
 const NAMES = {
-  vanguard: ['Rook', 'Heron'],
-  raider: ['Vex', 'Mako', 'Sable', 'Pike'],
+  vanguard: ['Rook', 'Heron', 'Wren', 'Kestrel'],
+  raider: ['Vex', 'Mako', 'Sable', 'Pike', 'Onyx'],
 };
 
 const ADJACENCY = WAYPOINTS.map(() => []);
@@ -182,6 +181,7 @@ export function createBots(scene, world) {
       visibleEnemy: null,
       lastSeen: null,
       lastSeenAt: -99,
+      lastCalloutAt: -99, // last radio callout this bot made, throttled in perceive
       aimTime: 0,
       burstLeft: 0,
       shotAt: 0,
@@ -228,6 +228,7 @@ export function createBots(scene, world) {
     bot.delayUntil = 0;
     bot.visibleEnemy = null;
     bot.lastSeen = null;
+    bot.lastCalloutAt = 0;
     bot.aimTime = 0;
     bot.burstLeft = 0;
     bot.pauseUntil = 0;
@@ -358,6 +359,12 @@ export function createBots(scene, world) {
           mate.lastSeen = seen.clone();
           mate.lastSeenAt = time;
         }
+      }
+      // The radio callout: at most one line per bot every six seconds, so the feed
+      // talks without spamming.
+      if (ctx.onCallout && time - bot.lastCalloutAt > 6) {
+        bot.lastCalloutAt = time;
+        ctx.onCallout(bot, seen);
       }
     } else if (bot.lastSeen && time - bot.lastSeenAt > CALLOUT_FRESH_SECONDS) {
       bot.lastSeen = null;

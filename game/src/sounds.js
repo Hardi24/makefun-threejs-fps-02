@@ -163,6 +163,10 @@ export function createSounds() {
       blip({ frequency: 1800, duration: 0.03, type: 'square', gain: 0.1 });
       burst({ duration: 0.25, frequency: 1200, sweepTo: 300, gain: 0.16 });
     },
+    // A smoke blooming: a soft, low hiss as the cloud pours out.
+    smoke() {
+      burst({ duration: 0.8, frequency: 400, sweepTo: 100, gain: 0.2 });
+    },
     roundWin() {
       [523, 659, 784].forEach((f, i) => blip({ frequency: f, duration: 0.16, type: 'triangle', gain: 0.2, delay: i * 0.11 }));
     },
